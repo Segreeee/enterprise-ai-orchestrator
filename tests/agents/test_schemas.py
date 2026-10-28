@@ -1,0 +1,49 @@
+import pytest
+from pydantic import ValidationError
+
+from orchestrator.agents.schemas import AgentSpec, Message, Turn
+
+
+@pytest.mark.parametrize("role", ["system", "user", "assistant"])
+def test_message_accepts_valid_roles(role):
+    assert Message(role=role, content="hi").role == role
+
+
+def test_message_rejects_unknown_role():
+    with pytest.raises(ValidationError):
+        Message(role="tool", content="hi")
+
+
+@pytest.mark.parametrize("content", ["", "   "])
+def test_message_rejects_blank_content(content):
+    with pytest.raises(ValidationError):
+        Message(role="user", content=content)
+
+
+def test_strict_mode_rejects_coercion():
+    with pytest.raises(ValidationError):
+        Message(role="user", content=123)
+
+
+def test_extra_fields_forbidden():
+    with pytest.raises(ValidationError):
+        AgentSpec(name="a", system_prompt="p", temperature=0.5)
+
+
+def test_agent_spec_requires_name_and_prompt():
+    with pytest.raises(ValidationError):
+        AgentSpec(name="", system_prompt="p")
+    with pytest.raises(ValidationError):
+        AgentSpec(name="a", system_prompt="")
+
+
+def test_turn_links_agent_and_message():
+    turn = Turn(agent="planner", message=Message(role="assistant", content="ok"))
+    assert turn.agent == "planner"
+    assert turn.message.content == "ok"
+
+
+def test_models_are_frozen():
+    msg = Message(role="user", content="hi")
+    with pytest.raises(ValidationError):
+        msg.content = "changed"
