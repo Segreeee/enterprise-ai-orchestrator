@@ -20,9 +20,11 @@ def test_message_rejects_blank_content(content):
         Message(role="user", content=content)
 
 
-def test_strict_mode_rejects_coercion():
+@pytest.mark.parametrize("content", [123, b"hi"])
+def test_strict_mode_rejects_coercion(content):
+    # bytes -> str is accepted in lax mode, so this case only fails because of strict=True.
     with pytest.raises(ValidationError):
-        Message(role="user", content=123)
+        Message(role="user", content=content)
 
 
 def test_extra_fields_forbidden():

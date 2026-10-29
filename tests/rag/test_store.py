@@ -1,5 +1,6 @@
 import pytest
 
+from orchestrator.models.embeddings import Embedding
 from orchestrator.rag.schemas import Chunk
 from orchestrator.rag.store import VectorStore
 
@@ -35,6 +36,25 @@ def test_add_is_idempotent_on_chunk_id(store, embedder):
     store.add([chunk], [embedder.embed(chunk.text)])
     store.add([chunk], [embedder.embed(chunk.text)])
     assert store.count() == 1
+
+
+def test_add_same_id_updates_stored_text(store, embedder):
+    store.add([make_chunk(0, "cat")], [embedder.embed("cat")])
+    store.add([make_chunk(0, "dog dog")], [embedder.embed("dog dog")])
+
+    assert store.count() == 1
+    assert store.search(embedder.embed("dog"), k=1)[0].chunk.text == "dog dog"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [([1.0, 0.0, 0.0], 1.0), ([0.0, 1.0, 0.0], 0.5), ([-1.0, 0.0, 0.0], 0.0)],
+    ids=["identical", "orthogonal", "opposite"],
+)
+def test_score_maps_cosine_distance_to_unit_interval(store, query, expected):
+    store.add([make_chunk(0, "x")], [Embedding(vector=[1.0, 0.0, 0.0], dimension=3)])
+    score = store.search(Embedding(vector=query, dimension=3), k=1)[0].score
+    assert score == pytest.approx(expected, abs=1e-6)
 
 
 def test_add_rejects_length_mismatch(store):

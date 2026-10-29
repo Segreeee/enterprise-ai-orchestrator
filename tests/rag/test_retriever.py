@@ -24,6 +24,23 @@ def test_reingest_replaces_all_previous_chunks(retriever, store):
     assert retriever.retrieve("cat", k=5)[0].chunk.text == "a short dog note"
 
 
+def test_failed_reingest_keeps_previous_version(retriever, store):
+    retriever.ingest(Document(id="pets", text="my cat"))
+
+    class DownEmbedder:
+        dimension = 3
+
+        def embed(self, text: str):
+            raise ConnectionError("Ollama down")
+
+    broken = Retriever(embedder=DownEmbedder(), store=store, chunker=Chunker(chunk_size=20, chunk_overlap=0))
+    with pytest.raises(ConnectionError):
+        broken.ingest(Document(id="pets", text="a new version"))
+
+    assert store.count() == 1
+    assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
+
+
 def test_ingest_blank_document_text_is_noop(retriever, store):
     assert retriever.ingest(Document(id="empty", text="   ")) == 0
     assert store.count() == 0
