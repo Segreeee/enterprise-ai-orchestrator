@@ -3,3 +3,10 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--strict-markers"
 markers = ["integration: requires a running Ollama server"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true

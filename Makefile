@@ -1,7 +1,7 @@
 PYTHON ?= python
 IMAGE  ?= enterprise-ai-orchestrator
 
-.PHONY: venv install test run docker-build docker-run docker-up docker-down clean
+.PHONY: venv install test typecheck run docker-build docker-run docker-up docker-down clean
 
 venv:
 	$(PYTHON) -m venv .venv
@@ -11,6 +11,9 @@ install:
 
 test:
 	$(PYTHON) -m pytest -q
+
+typecheck:
+	$(PYTHON) -m mypy
 
 run:
 	$(PYTHON) -m uvicorn orchestrator.api.app:app --app-dir src --reload

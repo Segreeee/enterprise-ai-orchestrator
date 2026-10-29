@@ -20,4 +20,4 @@ class Settings(BaseModel):
 
     @classmethod
     def from_env(cls) -> Self:
-        return cls(**{field: os.environ[var] for field, var in _ENV_VARS.items() if var in os.environ})
+        return cls.model_validate({field: os.environ[var] for field, var in _ENV_VARS.items() if var in os.environ})

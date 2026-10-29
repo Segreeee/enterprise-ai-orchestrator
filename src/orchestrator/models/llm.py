@@ -20,5 +20,5 @@ class OllamaClient:
         if not messages:
             raise ValueError("generate() needs at least one message")
         response = self._client.chat(model=self._model, messages=[m.model_dump() for m in messages])
-        # Message validation rejects empty replies or unexpected roles from the model.
-        return Message(role=response.message.role, content=response.message.content)
+        # Untrusted model output: validation rejects empty replies or unexpected roles.
+        return Message.model_validate({"role": response.message.role, "content": response.message.content})

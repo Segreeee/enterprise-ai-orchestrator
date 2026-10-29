@@ -41,4 +41,4 @@ class OllamaEmbedder:
         if not text.strip():
             raise ValueError("cannot embed blank text")
         response = self._client.embed(model=self._model, input=text)
-        return Embedding(vector=response.embeddings[0], dimension=self.dimension)
+        return Embedding.model_validate({"vector": response.embeddings[0], "dimension": self.dimension})

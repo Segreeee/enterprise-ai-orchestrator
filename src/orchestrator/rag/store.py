@@ -4,6 +4,7 @@ from typing import Self
 
 import chromadb
 from chromadb.api import ClientAPI
+from chromadb.api.types import PyEmbeddings
 from pydantic import PositiveInt, validate_call
 
 from orchestrator.models.embeddings import Embedding
@@ -36,10 +37,11 @@ class VectorStore:
             raise ValueError("chunks and embeddings must have the same length")
         if not chunks:
             return
+        vectors: PyEmbeddings = [e.vector for e in embeddings]
         self._collection.upsert(
             ids=[c.id for c in chunks],
             documents=[c.text for c in chunks],
-            embeddings=[e.vector for e in embeddings],
+            embeddings=vectors,
             metadatas=[{**c.metadata, _DOC_ID: c.document_id, _INDEX: c.index} for c in chunks],
         )
 
@@ -47,17 +49,25 @@ class VectorStore:
     def search(self, embedding: Embedding, k: PositiveInt) -> list[RetrievalResult]:
         if self.count() == 0:
             return []
+        query: PyEmbeddings = [embedding.vector]
         res = self._collection.query(
-            query_embeddings=[embedding.vector],
+            query_embeddings=query,
             n_results=min(k, self.count()),
             include=["documents", "metadatas", "distances"],
         )
+        documents, metadatas, distances = res["documents"], res["metadatas"], res["distances"]
+        # Optional in Chroma's types because `include` controls them; we always request all three.
+        if documents is None or metadatas is None or distances is None:
+            raise RuntimeError("Chroma query omitted documents, metadatas or distances")
         results = []
         for chunk_id, text, meta, distance in zip(
-            res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0], strict=True
+            res["ids"][0], documents[0], metadatas[0], distances[0], strict=True
         ):
             user_meta = {key: value for key, value in meta.items() if key not in (_DOC_ID, _INDEX)}
-            chunk = Chunk(id=chunk_id, document_id=meta[_DOC_ID], index=meta[_INDEX], text=text, metadata=user_meta)
+            # Rebuilt from stored data, so validate rather than trust the metadata types.
+            chunk = Chunk.model_validate(
+                {"id": chunk_id, "document_id": meta[_DOC_ID], "index": meta[_INDEX], "text": text, "metadata": user_meta}
+            )
             # Cosine distance is in [0, 2]; map to a similarity in [0, 1], clamping float noise.
             score = min(max(1.0 - distance / 2.0, 0.0), 1.0)
             results.append(RetrievalResult(chunk=chunk, score=score))
