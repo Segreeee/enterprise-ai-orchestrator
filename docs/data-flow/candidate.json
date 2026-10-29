@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Enterprise AI Orchestrator: Data Flow",
+    "locale": "en",
+    "output": "docs/data-flow/data-flow.html",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    { "label": "Client" },
+    { "label": "API (FastAPI)" },
+    { "label": "Domain" },
+    { "label": "Backends" }
+  ],
+  "nodes": [
+    { "id": "client", "type": "frontend", "label": "API Client", "sublabel": "curl / httpx", "stage": 0, "row": 1, "tag": "JSON" },
+    { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": "ingest, query, conversations", "stage": 1, "row": 1, "tag": "Pydantic v2" },
+    { "id": "retriever", "type": "backend", "label": "Retriever", "sublabel": "Chunker + embed + store", "stage": 2, "row": 0, "tag": "RAG" },
+    { "id": "orchestrator", "type": "backend", "label": "Orchestrator", "sublabel": "RoundRobin turns", "stage": 2, "row": 2, "tag": "multi-agent" },
+    { "id": "embed", "type": "external", "label": "Ollama embed", "sublabel": "nomic-embed-text", "stage": 3, "row": 0, "tag": "768-d" },
+    { "id": "chroma", "type": "database", "label": "ChromaDB", "sublabel": "/data/chroma volume", "stage": 3, "row": 1, "tag": "cosine" },
+    { "id": "chat", "type": "external", "label": "Ollama chat", "sublabel": "llama3.2", "stage": 3, "row": 2, "tag": "LLM" }
+  ],
+  "flows": [
+    { "id": "request", "from": "client", "to": "api", "label": "JSON request", "variant": "emphasis" },
+    { "id": "doc-or-query", "from": "api", "to": "retriever", "label": "Document / query", "variant": "emphasis" },
+    { "id": "embed-text", "from": "retriever", "to": "embed", "label": "chunk text", "variant": "default" },
+    { "id": "vectors", "from": "embed", "to": "retriever", "label": "Embedding", "variant": "default" },
+    { "id": "upsert-search", "from": "retriever", "to": "chroma", "label": "upsert / search", "variant": "emphasis" },
+    { "id": "task", "from": "api", "to": "orchestrator", "label": "task + agents", "variant": "emphasis" },
+    { "id": "rag-context", "from": "retriever", "to": "orchestrator", "label": "top-k context", "variant": "default" },
+    { "id": "prompt", "from": "orchestrator", "to": "chat", "label": "Message[]", "variant": "emphasis" },
+    { "id": "reply", "from": "chat", "to": "orchestrator", "label": "reply Message", "variant": "default" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "POST /ingest",
+      "items": [
+        "Document is split into fixed-size character windows with overlap",
+        "Every chunk is embedded before old chunks are deleted, so a failing embedder keeps the previous version",
+        "Chunks are upserted into Chroma with document id and index metadata"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "POST /query",
+      "items": [
+        "The query is embedded with the same model used at ingest",
+        "Chroma cosine distance in [0, 2] is mapped to a score in [0, 1]",
+        "Results return as validated RetrievalResult objects, best first"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "POST /conversations",
+      "items": [
+        "RoundRobin picks the next agent; rotation restarts on every run",
+        "RAG query uses the task on turn 1, then the latest reply",
+        "Context is appended to the speaking agent's system prompt",
+        "Stops at max_turns (at most 20) or when a reply contains stop_token"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Guardrails",
+      "items": [
+        "Pydantic v2 strict, frozen models at every boundary; invalid input returns 422",
+        "Ollama unreachable (ConnectionError) returns 503 instead of 500",
+        "Empty model replies or unexpected roles fail Message validation"
+      ]
+    }
+  ]
+}
