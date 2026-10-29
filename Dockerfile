@@ -12,7 +12,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-RUN useradd --create-home --uid 1000 app
+# A named volume mounted on /data/chroma inherits this ownership, so the non-root user can write.
+RUN useradd --create-home --uid 1000 app \
+    && mkdir -p /data/chroma && chown app:app /data/chroma
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY src/ src/
