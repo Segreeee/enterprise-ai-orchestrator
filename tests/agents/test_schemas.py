@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.agents.schemas import AgentSpec, Message, Turn
+from orchestrator.agents.schemas import AgentSpec, Conversation, Message, Turn
 
 
 @pytest.mark.parametrize("role", ["system", "user", "assistant"])
@@ -47,3 +47,14 @@ def test_models_are_frozen():
     msg = Message(role="user", content="hi")
     with pytest.raises(ValidationError):
         msg.content = "changed"
+
+
+def test_conversation_holds_turns_and_stop_reason():
+    turn = Turn(agent="a", message=Message(role="assistant", content="ok"))
+    conv = Conversation(task="t", turns=[turn], stop_reason="max_turns")
+    assert conv.turns == [turn]
+
+
+def test_conversation_rejects_unknown_stop_reason():
+    with pytest.raises(ValidationError):
+        Conversation(task="t", turns=[], stop_reason="timeout")

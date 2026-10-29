@@ -22,3 +22,9 @@ class AgentSpec(_Schema):
 class Turn(_Schema):
     agent: str = Field(min_length=1)
     message: Message
+
+
+class Conversation(_Schema):
+    task: str = Field(min_length=1)
+    turns: list[Turn]
+    stop_reason: Literal["max_turns", "stop_token"]
