@@ -4,7 +4,7 @@ from typing import Self
 
 import chromadb
 from chromadb.api import ClientAPI
-from chromadb.api.types import PyEmbeddings
+from chromadb.api.types import LiteralValue, LogicalOperator, PyEmbeddings, Where, WhereOperator
 from pydantic import PositiveInt, validate_call
 
 from orchestrator.models.embeddings import Embedding
@@ -29,8 +29,11 @@ class VectorStore:
     def count(self) -> int:
         return self._collection.count()
 
-    def delete_document(self, document_id: str) -> None:
-        self._collection.delete(where={_DOC_ID: document_id})
+    def delete_document(self, document_id: str, from_index: int = 0) -> None:
+        """Delete the document's chunks whose index is >= from_index (all of them by default)."""
+        surplus: dict[WhereOperator | LogicalOperator, LiteralValue] = {"$gte": from_index}
+        where: Where = {"$and": [{_DOC_ID: document_id}, {_INDEX: surplus}]}
+        self._collection.delete(where=where)
 
     def add(self, chunks: Sequence[Chunk], embeddings: Sequence[Embedding]) -> None:
         if len(chunks) != len(embeddings):

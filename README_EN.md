@@ -129,7 +129,8 @@ For a richer, interactive version with per-flow explanations, open the
 | **`Protocol`s for `LLMClient` and `Embedder`** | The domain never imports a vendor SDK type. Swapping Ollama for another provider is a new class, not a refactor. Fakes need no mocking library. |
 | **Strict, frozen, `extra="forbid"` Pydantic models** | Typos in payloads fail loudly with a 422, and objects cannot be mutated after validation. |
 | **LLM output is re-validated** | An empty reply or an unexpected role from the model raises a `ValidationError` instead of silently corrupting the conversation. |
-| **Safe re-ingest** | All chunks are embedded *before* the old ones are deleted, so an embedding failure leaves the previous version intact and no stale chunks survive a shorter re-ingest. |
+| **Safe re-ingest** | New chunks are embedded and written first (upsert by chunk id); only then are the old version's surplus chunks deleted. A failing embedder or a rejected write leaves the previous version intact, and no stale chunks survive a shorter re-ingest. |
+| **Bounded work per request** | `Document` caps text at 50,000 characters, the id at 256, metadata at 16 entries with keys ≤ 64 and string values ≤ 256 characters. Oversized payloads get a 422 before any embedding. Ollama clients use a 60 s timeout, so a hung backend cannot hold a worker thread forever. |
 | **Cosine distance mapped to `[0, 1]`** | Chroma returns a distance in `[0, 2]`; `score = 1 - d/2`, clamped, gives clients an intuitive similarity. |
 | **503 on backend outage** | If Ollama is down, the client gets a retryable *Service Unavailable*, not an opaque 500. |
 | **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call) and `k ≤ 50` are enforced at the API boundary. |
@@ -281,7 +282,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Re-ingesting the same `id` replaces all of its previous chunks. `metadata` values must be scalars (string, number or boolean).
+Re-ingesting the same `id` replaces all of its previous chunks. `metadata` values must be scalars (string, number or boolean). Limits: `text` ≤ 50,000 characters, `id` ≤ 256, at most 16 metadata entries, keys ≤ 64 and string values ≤ 256 characters; larger payloads return 422.
 
 ### `POST /query`
 

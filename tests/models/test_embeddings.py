@@ -1,9 +1,11 @@
 import math
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
+from orchestrator.models import DEFAULT_TIMEOUT
 from orchestrator.models.embeddings import Embedder, Embedding, OllamaEmbedder
 
 DIM = 768
@@ -64,3 +66,15 @@ def test_ollama_embedder_rejects_blank_text(text):
     with pytest.raises(ValueError, match="blank"):
         OllamaEmbedder(model="m", dimension=DIM, client=stub).embed(text)
     assert stub.calls == []
+
+
+def test_ollama_embedder_times_out_on_hung_backend(silent_server):
+    embedder = OllamaEmbedder(model="m", dimension=DIM, host=silent_server, timeout=0.2)
+    with pytest.raises(httpx.TimeoutException):
+        embedder.embed("cat")
+
+
+def test_ollama_embedder_has_a_finite_default_timeout():
+    timeout = OllamaEmbedder()._client._client.timeout
+    assert timeout == httpx.Timeout(DEFAULT_TIMEOUT)
+    assert timeout.read is not None and 0 < timeout.read <= 120

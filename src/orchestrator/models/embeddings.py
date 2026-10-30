@@ -3,6 +3,8 @@ from typing import Protocol, Self, runtime_checkable
 import ollama
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PositiveInt, model_validator
 
+from orchestrator.models import DEFAULT_TIMEOUT
+
 
 class Embedding(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -32,10 +34,11 @@ class OllamaEmbedder:
         dimension: int = 768,
         host: str = "http://localhost:11434",
         client: ollama.Client | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._model = model
         self.dimension = dimension
-        self._client = client or ollama.Client(host=host)
+        self._client = client or ollama.Client(host=host, timeout=timeout)
 
     def embed(self, text: str) -> Embedding:
         if not text.strip():

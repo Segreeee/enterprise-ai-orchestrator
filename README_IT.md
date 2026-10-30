@@ -129,7 +129,8 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | **`Protocol` per `LLMClient` ed `Embedder`** | Il dominio non importa mai tipi di un SDK specifico. Sostituire Ollama con un altro provider significa aggiungere una classe, non rifattorizzare. I fake non richiedono librerie di mocking. |
 | **Modelli Pydantic strict, frozen, `extra="forbid"`** | Un errore di battitura nel payload fallisce subito con un 422 e gli oggetti non si possono modificare dopo la validazione. |
 | **L'output dell'LLM viene rivalidato** | Una risposta vuota o con un ruolo inatteso solleva una `ValidationError` invece di corrompere in silenzio la conversazione. |
-| **La re-ingestione sostituisce il documento in modo sicuro** | Tutti gli embedding vengono calcolati *prima* di cancellare i chunk vecchi: se l'embedding fallisce resta la versione precedente, e una re-ingestione più corta non lascia chunk orfani. |
+| **La re-ingestione sostituisce il documento in modo sicuro** | I nuovi chunk vengono calcolati e scritti per primi (upsert per id del chunk); solo dopo si cancellano i chunk in eccesso della versione vecchia. Se l'embedding fallisce o ChromaDB rifiuta la scrittura resta la versione precedente, e una re-ingestione più corta non lascia chunk orfani. |
+| **Lavoro limitato per richiesta** | `Document` limita il testo a 50.000 caratteri, l'id a 256, i metadati a 16 voci con chiavi ≤ 64 e valori testuali ≤ 256 caratteri. I payload troppo grandi ricevono 422 prima di qualsiasi embedding. I client Ollama hanno un timeout di 60 s, così un backend bloccato non occupa un thread per sempre. |
 | **Distanza coseno convertita in `[0, 1]`** | Chroma restituisce una distanza in `[0, 2]`; `score = 1 - d/2`, limitato all'intervallo, è una similarità intuitiva per il client. |
 | **503 se il backend non risponde** | Se Ollama è giù il client riceve un *Service Unavailable* che si può ritentare, non un 500 generico. |
 | **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM) e `k ≤ 50` sono imposti a livello di API. |
@@ -281,7 +282,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Ingerire di nuovo lo stesso `id` sostituisce tutti i chunk precedenti. I valori di `metadata` devono essere semplici: testo, numero o booleano.
+Ingerire di nuovo lo stesso `id` sostituisce tutti i chunk precedenti. I valori di `metadata` devono essere semplici: testo, numero o booleano. Limiti: `text` ≤ 50.000 caratteri, `id` ≤ 256, al massimo 16 voci di metadati, chiavi ≤ 64 e valori testuali ≤ 256 caratteri; oltre si riceve 422.
 
 ### `POST /query`
 

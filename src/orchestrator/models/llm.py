@@ -4,6 +4,7 @@ from typing import Protocol, runtime_checkable
 import ollama
 
 from orchestrator.agents.schemas import Message
+from orchestrator.models import DEFAULT_TIMEOUT
 
 
 @runtime_checkable
@@ -12,9 +13,15 @@ class LLMClient(Protocol):
 
 
 class OllamaClient:
-    def __init__(self, model: str, host: str = "http://localhost:11434", client: ollama.Client | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        host: str = "http://localhost:11434",
+        client: ollama.Client | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
         self._model = model
-        self._client = client or ollama.Client(host=host)
+        self._client = client or ollama.Client(host=host, timeout=timeout)
 
     def generate(self, messages: Sequence[Message]) -> Message:
         if not messages:

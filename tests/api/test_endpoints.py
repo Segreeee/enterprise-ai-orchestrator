@@ -8,6 +8,7 @@ from orchestrator.api.app import create_app
 from orchestrator.api.dependencies import get_llm, get_retriever
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import Retriever
+from orchestrator.rag.schemas import MAX_DOCUMENT_CHARS, MAX_METADATA_ENTRIES
 
 AGENTS = [
     {"name": "planner", "system_prompt": "You plan."},
@@ -54,6 +55,20 @@ def test_ingest_returns_created_with_chunk_count(client, store):
 )
 def test_ingest_rejects_invalid_documents(client, payload):
     assert client.post("/ingest", json=payload).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"text": "cat " * (MAX_DOCUMENT_CHARS // 4 + 1)},
+        {"text": "cat", "metadata": {f"k{i}": i for i in range(MAX_METADATA_ENTRIES + 1)}},
+        {"text": "cat", "metadata": {"note": "x" * 10_000}},
+    ],
+)
+def test_ingest_rejects_oversized_documents_before_embedding(client, embedder, store, extra):
+    assert client.post("/ingest", json={"id": "big", **extra}).status_code == 422
+    assert embedder.calls == []
+    assert store.count() == 0
 
 
 # --- /query ----------------------------------------------------------------

@@ -1,11 +1,12 @@
 from collections.abc import Sequence
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
 from orchestrator.agents.schemas import Message
-from orchestrator.models.llm import LLMClient, OllamaClient
+from orchestrator.models.llm import DEFAULT_TIMEOUT, LLMClient, OllamaClient
 
 
 class FakeLLMClient:
@@ -61,6 +62,19 @@ def test_ollama_client_sends_messages_and_maps_reply():
 def test_ollama_client_rejects_empty_conversation():
     with pytest.raises(ValueError, match="at least one message"):
         OllamaClient(model="m", client=StubOllama()).generate([])
+
+
+def test_ollama_client_times_out_on_hung_backend(silent_server):
+    client = OllamaClient(model="m", host=silent_server, timeout=0.2)
+    with pytest.raises(httpx.TimeoutException):
+        client.generate(CONVERSATION)
+
+
+def test_ollama_client_has_a_finite_default_timeout():
+    # httpx.Timeout(None) would let a hung Ollama hold a worker thread forever.
+    timeout = OllamaClient(model="m")._client._client.timeout
+    assert timeout == httpx.Timeout(DEFAULT_TIMEOUT)
+    assert timeout.read is not None and 0 < timeout.read <= 120
 
 
 @pytest.mark.parametrize(("role", "content"), [("assistant", ""), ("tool", "x")])

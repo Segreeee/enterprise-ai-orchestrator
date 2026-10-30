@@ -1,4 +1,5 @@
 import pytest
+from chromadb.errors import ChromaError
 
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import Retriever
@@ -39,6 +40,39 @@ def test_failed_reingest_keeps_previous_version(retriever, store):
 
     assert store.count() == 1
     assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
+
+
+def test_failed_store_write_keeps_previous_version(retriever, store, monkeypatch):
+    retriever.ingest(Document(id="pets", text="my cat"))
+
+    def reject(chunks, embeddings):
+        raise RuntimeError("store rejected the write")
+
+    monkeypatch.setattr(store, "add", reject)
+    with pytest.raises(RuntimeError):
+        retriever.ingest(Document(id="pets", text="a new version"))
+    monkeypatch.undo()
+
+    assert store.count() == 1
+    assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
+
+
+def test_chroma_rejected_metadata_keeps_previous_version(retriever, store):
+    # Real failure from the audit: Chroma refuses "$"-prefixed metadata keys at write time.
+    retriever.ingest(Document(id="pets", text="my cat"))
+
+    with pytest.raises(ChromaError):
+        retriever.ingest(Document(id="pets", text="a new version", metadata={"$and": "x"}))
+
+    assert store.count() == 1
+    assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
+
+
+def test_reingest_into_more_chunks_keeps_only_the_new_version(retriever, store):
+    retriever.ingest(Document(id="pets", text="old cat"))
+    assert retriever.ingest(Document(id="pets", text="dog " * 20)) == 4
+    assert store.count() == 4
+    assert all("cat" not in r.chunk.text for r in retriever.retrieve("cat", k=10))
 
 
 def test_ingest_blank_document_text_is_noop(retriever, store):
