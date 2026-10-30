@@ -1,14 +1,18 @@
 from collections.abc import Sequence
 
+import httpx
+import ollama
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.agents.schemas import Message
+from orchestrator.agents.schemas import MAX_SYSTEM_PROMPT_CHARS, Message
 from orchestrator.api.app import create_app
 from orchestrator.api.dependencies import get_llm, get_retriever
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import Retriever
+from orchestrator.api.schemas import MAX_AGENTS, MAX_QUERY_CHARS, MAX_STOP_TOKEN_CHARS, MAX_TASK_CHARS
 from orchestrator.rag.schemas import MAX_DOCUMENT_CHARS, MAX_METADATA_ENTRIES
+from orchestrator.rag.store import EmbeddingMismatchError
 
 AGENTS = [
     {"name": "planner", "system_prompt": "You plan."},
@@ -102,7 +106,14 @@ def test_query_on_empty_store_returns_no_results(client):
 
 @pytest.mark.parametrize(
     "payload",
-    [{"query": ""}, {"query": "   "}, {"query": "cat", "k": 0}, {"query": "cat", "k": 51}, {}],
+    [
+        {"query": ""},
+        {"query": "   "},
+        {"query": "cat", "k": 0},
+        {"query": "cat", "k": 51},
+        {},
+        {"query": "c" * (MAX_QUERY_CHARS + 1)},
+    ],
 )
 def test_query_rejects_invalid_requests(client, payload):
     assert client.post("/query", json=payload).status_code == 422
@@ -127,7 +138,8 @@ def test_conversation_injects_rag_context(client, llm):
 
     client.post("/conversations", json={"task": "cat care", "agents": AGENTS[:1], "max_turns": 1})
 
-    assert "a cat sleeps a lot" in llm.calls[0][0].content
+    assert "a cat sleeps a lot" not in llm.calls[0][0].content
+    assert "a cat sleeps a lot" in llm.calls[0][1].content
 
 
 def test_conversation_without_rag_keeps_plain_system_prompt(client, llm):
@@ -176,3 +188,106 @@ def test_llm_backend_unreachable_returns_503(retriever):
 
     assert response.status_code == 503
     assert "unavailable" in response.json()["detail"]
+
+
+def agent(name: str = "a", prompt: str = "p") -> dict:
+    return {"name": name, "system_prompt": prompt}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"task": "t" * (MAX_TASK_CHARS + 1), "agents": [agent()]},
+        {"task": "t", "agents": [agent(prompt="p" * (MAX_SYSTEM_PROMPT_CHARS + 1))]},
+        {"task": "t", "agents": [agent(name="n" * 65)]},
+        {"task": "t", "agents": [agent()], "stop_token": "s" * (MAX_STOP_TOKEN_CHARS + 1)},
+        {"task": "t", "agents": [agent(name=f"a{i}") for i in range(MAX_AGENTS + 1)]},
+    ],
+    ids=["task", "system_prompt", "agent_name", "stop_token", "agent_count"],
+)
+def test_conversation_rejects_oversized_requests_before_any_llm_call(client, llm, payload):
+    assert client.post("/conversations", json=payload).status_code == 422
+    assert llm.calls == []
+
+
+def test_conversation_accepts_requests_at_the_limits(client, llm):
+    payload = {
+        "task": "t" * MAX_TASK_CHARS,
+        "agents": [agent(f"a{i}", "p" * MAX_SYSTEM_PROMPT_CHARS) for i in range(MAX_AGENTS)],
+        "stop_token": "s" * MAX_STOP_TOKEN_CHARS,
+        "max_turns": 1,
+        "use_rag": False,
+    }
+    assert client.post("/conversations", json=payload).status_code == 200
+    assert client.post("/query", json={"query": "c" * MAX_QUERY_CHARS}).status_code == 200
+
+
+# --- backend failures -------------------------------------------------------------------
+
+SECRET = "ollama-internal.corp:11434"
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "detail"),
+    [
+        (ConnectionError(f"Failed to connect to {SECRET}"), 503, "model backend unavailable"),
+        (ollama.ResponseError(f"model 'llama9' not found on {SECRET}", 404), 503, "model backend error"),
+        (httpx.ReadTimeout(f"read timed out from {SECRET}"), 504, "model backend timed out"),
+    ],
+    ids=["unreachable", "model-missing", "timeout"],
+)
+def test_backend_failures_map_to_generic_5xx(retriever, error, status, detail):
+    class FailingLLM:
+        def generate(self, messages, response_format=None):
+            raise error
+
+    app = create_app()
+    app.dependency_overrides[get_retriever] = lambda: retriever
+    app.dependency_overrides[get_llm] = FailingLLM
+
+    response = TestClient(app).post("/conversations", json={"task": "t", "agents": AGENTS})
+
+    assert response.status_code == status
+    assert response.json() == {"detail": detail}
+    assert SECRET not in response.text
+
+
+def test_embedder_timeout_on_query_maps_to_504(store):
+    class SlowEmbedder:
+        model = "keyword-test"
+        dimension = 3
+
+        def embed(self, text):
+            raise httpx.ConnectTimeout("connect timed out")
+
+    app = create_app()
+    app.dependency_overrides[get_retriever] = lambda: Retriever(embedder=SlowEmbedder(), store=store)
+
+    response = TestClient(app).post("/query", json={"query": "cat"})
+
+    assert response.status_code == 504
+
+
+# --- startup -----------------------------------------------------------------------------
+
+
+def test_startup_builds_the_retriever_so_a_store_mismatch_fails_fast():
+    def mismatched():
+        raise EmbeddingMismatchError("store built with another-model/384")
+
+    app = create_app()
+    app.dependency_overrides[get_retriever] = mismatched
+
+    with pytest.raises(EmbeddingMismatchError):
+        with TestClient(app):
+            pass
+
+
+def test_startup_succeeds_with_a_compatible_store(retriever):
+    built = []
+    app = create_app()
+    app.dependency_overrides[get_retriever] = lambda: built.append(1) or retriever
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+    assert built == [1]

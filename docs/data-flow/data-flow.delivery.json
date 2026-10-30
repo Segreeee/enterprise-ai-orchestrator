@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "receiptId": "c7c05ea1-9422-47a3-8a6b-ab312028a940",
+  "receiptId": "20377f68-01b0-42f2-bd5c-65f28fe39fbd",
   "status": "current",
   "command": "deliver",
   "type": "dataflow",
   "input": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\candidate.json",
   "output": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\data-flow.html",
   "specification": {
-    "sha256": "929747d0bc6dbbb6e22255b985a02515160de0b951851a05df7d6d226706e132",
-    "bytes": 3771
+    "sha256": "39f864b013601daf3ca6c81f5b351cf76c5411f45b7c888b03ec4ff301792ff9",
+    "bytes": 6992
   },
   "artifact": {
-    "sha256": "afce835da5a3ee4e716f4b99a5d611a45ae676cad3c349cc8f655d209e164f0e",
-    "bytes": 837532
+    "sha256": "f81b9d7165c44a144fa306e277b01d35e9c48fe6c6ca3b708402885be48a739d",
+    "bytes": 846095
   }
 }

@@ -2,7 +2,7 @@ import pytest
 
 from orchestrator.models.embeddings import Embedding
 from orchestrator.rag.schemas import Chunk
-from orchestrator.rag.store import VectorStore
+from orchestrator.rag.store import EmbeddingMismatchError, VectorStore
 
 
 def make_chunk(i: int, text: str, **metadata) -> Chunk:
@@ -81,3 +81,64 @@ def test_all_chunks_rebuilds_every_stored_chunk(store, embedder):
 
 def test_all_chunks_on_empty_store_is_empty(store):
     assert store.all_chunks() == []
+
+
+# --- versions -------------------------------------------------------------------
+
+
+def add_versioned(store, embedder, version: str, *texts: str, document_id: str = "d1") -> None:
+    chunks = [
+        Chunk(id=f"{document_id}:{version}:{i}", document_id=document_id, index=i, text=t)
+        for i, t in enumerate(texts)
+    ]
+    store.add(chunks, [embedder.embed(t) for t in texts], version=version)
+
+
+def test_search_and_all_chunks_only_see_the_given_versions(store, embedder):
+    add_versioned(store, embedder, "v1", "old cat")
+    add_versioned(store, embedder, "v2", "new cat")
+
+    assert [r.chunk.text for r in store.search(embedder.embed("cat"), k=5, versions=["v2"])] == ["new cat"]
+    assert [c.text for c in store.all_chunks(versions=["v2"])] == ["new cat"]
+    assert store.search(embedder.embed("cat"), k=5, versions=[]) == []
+    assert store.all_chunks(versions=[]) == []
+
+
+def test_activate_points_a_document_at_one_version(store):
+    assert store.active_version("d1") is None
+    store.activate("d1", "v1", chunks=3)
+    store.activate("d2", "w1", chunks=1)
+    store.activate("d1", "v2", chunks=2)
+
+    assert store.active_version("d1") == ("v2", 2)
+    assert store.active_versions() == {"d1": "v2", "d2": "w1"}
+
+
+def test_delete_stale_keeps_only_the_given_version_of_that_document(store, embedder):
+    add_versioned(store, embedder, "v1", "old a", "old b")
+    add_versioned(store, embedder, "v2", "new a")
+    store.add([make_chunk(9, "legacy chunk without version")], [embedder.embed("legacy")])
+    add_versioned(store, embedder, "w1", "other doc", document_id="d2")
+
+    store.delete_stale("d1", keep_version="v2")
+
+    assert sorted(c.text for c in store.all_chunks()) == ["new a", "other doc"]
+
+
+def test_check_embedding_stamps_an_empty_store_then_refuses_a_different_model(store):
+    store.check_embedding("nomic-embed-text", 768)
+    store.check_embedding("nomic-embed-text", 768)
+
+    for model, dimension in [("nomic-embed-text", 384), ("other-model", 768)]:
+        with pytest.raises(EmbeddingMismatchError, match="nomic-embed-text"):
+            store.check_embedding(model, dimension)
+
+
+def test_embedding_stamp_survives_reopen(tmp_path):
+    VectorStore.persistent(tmp_path).check_embedding("nomic-embed-text", 768)
+    with pytest.raises(EmbeddingMismatchError):
+        VectorStore.persistent(tmp_path).check_embedding("other-model", 768)
+
+
+def test_persistent_store_disables_chroma_telemetry(tmp_path):
+    assert VectorStore.persistent(tmp_path).client.get_settings().anonymized_telemetry is False

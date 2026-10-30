@@ -21,6 +21,7 @@ class Embedding(BaseModel):
 
 @runtime_checkable
 class Embedder(Protocol):
+    model: str
     dimension: int
 
     def embed(self, text: str) -> Embedding: ...
@@ -36,12 +37,12 @@ class OllamaEmbedder:
         client: ollama.Client | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
-        self._model = model
+        self.model = model
         self.dimension = dimension
         self._client = client or ollama.Client(host=host, timeout=timeout)
 
     def embed(self, text: str) -> Embedding:
         if not text.strip():
             raise ValueError("cannot embed blank text")
-        response = self._client.embed(model=self._model, input=text)
+        response = self._client.embed(model=self.model, input=text)
         return Embedding.model_validate({"vector": response.embeddings[0], "dimension": self.dimension})

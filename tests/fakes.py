@@ -41,6 +41,7 @@ class FakeRetriever:
 class KeywordEmbedder:
     """Embedder with one axis per keyword, so similarity ranking is predictable."""
 
+    model = "keyword-test"
     dimension = len(KEYWORDS)
 
     def __init__(self) -> None:

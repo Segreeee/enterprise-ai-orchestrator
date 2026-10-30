@@ -27,6 +27,7 @@
 - [API ed esempi](#api-ed-esempi)
 - [Configurazione](#configurazione)
 - [Limiti noti e roadmap](#limiti-noti-e-roadmap)
+- [Sviluppi Futuri (Roadmap MLOps)](#sviluppi-futuri-roadmap-mlops)
 
 ---
 
@@ -94,7 +95,7 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | Modulo | Tipi principali | Responsabilità |
 |---|---|---|
 | `config.py` | `Settings` | Configurazione tipizzata da variabili d'ambiente (`OLLAMA_HOST` validato come `HttpUrl`) |
-| `api/app.py` | `create_app()` | Factory dell'app; trasforma `ConnectionError` in **503** |
+| `api/app.py` | `create_app()` | Factory dell'app; all'avvio verifica il modello di embedding dello store; trasforma i guasti di Ollama in **503/504** generici |
 | `api/routes.py` | `/health`, `/ingest`, `/query`, `/conversations` | Strato HTTP sottile, senza logica di business |
 | `api/schemas.py` | `QueryRequest`, `ConversationRequest`, … | Contratti di richiesta e risposta con limiti (`k ≤ 50`, `max_turns ≤ 20`, nomi degli agenti univoci) |
 | `api/dependencies.py` | `get_llm`, `get_retriever`, `get_settings` | Singleton creati alla prima richiesta; nei test si sostituiscono con `dependency_overrides` |
@@ -106,14 +107,15 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | `rag/schemas.py` | `Document`, `Chunk`, `RetrievalResult` | Modello di dominio RAG; score vincolato a `[0, 1]` |
 | `rag/chunker.py` | `Chunker` | Finestre di caratteri con sovrapposizione; verifica che `overlap < size` |
 | `rag/store.py` | `VectorStore` | Wrapper di ChromaDB (in memoria o persistente), spazio coseno, upsert idempotente, `all_chunks()` per l'indice BM25 |
-| `rag/retriever.py` | `Retriever` | `ingest(Document)` e `retrieve(query, k)` ibrido (vettoriale + BM25, RRF) |
+| `rag/retriever.py` | `Retriever` | `ingest(Document)` versionato con lock per documento, e `retrieve(query, k)` ibrido (vettoriale + BM25, RRF) solo sulle versioni attive |
 
 ### Come funziona una conversazione
 
 1. `RoundRobin` sceglie il prossimo agente. La rotazione riparte da capo a ogni esecuzione, quindi i risultati sono riproducibili.
 2. Se il RAG è attivo, il `Retriever` cerca con il task al primo turno e poi con l'ultima risposta, così il contesto segue la discussione.
 3. L'agente di turno riceve:
-   - il proprio system prompt, con in coda una sezione numerata `Relevant context`;
+   - il proprio system prompt (più, se c'è contesto RAG, una regola fissa: i documenti recuperati sono dati non fidati);
+   - i chunk recuperati, numerati, in un messaggio `user` separato tra `<documents>…</documents>`;
    - il task;
    - i propri turni precedenti come messaggi `assistant`;
    - i turni degli altri agenti come messaggi `user`, preceduti dal nome (`[nome-agente]`).
@@ -129,13 +131,15 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | **`Protocol` per `LLMClient` ed `Embedder`** | Il dominio non importa mai tipi di un SDK specifico. Sostituire Ollama con un altro provider significa aggiungere una classe, non rifattorizzare. I fake non richiedono librerie di mocking. |
 | **Modelli Pydantic strict, frozen, `extra="forbid"`** | Un errore di battitura nel payload fallisce subito con un 422 e gli oggetti non si possono modificare dopo la validazione. |
 | **L'output dell'LLM viene rivalidato** | Una risposta vuota o con un ruolo inatteso solleva una `ValidationError` invece di corrompere in silenzio la conversazione. |
-| **La re-ingestione sostituisce il documento in modo sicuro** | I nuovi chunk vengono calcolati e scritti per primi (upsert per id del chunk); solo dopo si cancellano i chunk in eccesso della versione vecchia. Se l'embedding fallisce o ChromaDB rifiuta la scrittura resta la versione precedente, e una re-ingestione più corta non lascia chunk orfani. |
+| **Ingestion versionata** | Ogni ingestione è una versione: un hash di testo, metadati, chunking e modello di embedding, quindi gli id dei chunk sono `{doc}:{versione}:{i}`. La nuova versione viene scritta per intero, poi una sola upsert sposta su di essa il puntatore del documento (nella collection `<collection>__system`), infine si cancellano i chunk precedenti. ChromaDB non ha transazioni su più record, ma la singola upsert è atomica: chi legge vede la versione vecchia o la nuova, mai un misto. Un errore prima dello spostamento lascia attiva la versione vecchia; i resti sono invisibili e vengono puliti alla successiva ingestione. Reingerire contenuto identico non fa nulla. Un lock per documento serializza le ingestioni concorrenti dello stesso id. |
+| **Modello di embedding legato allo store** | Lo store registra modello e dimensione degli embedding al primo uso; all'avvio un modello o una dimensione diversi bloccano l'app (`EmbeddingMismatchError`) invece di mescolare spazi vettoriali. |
+| **Il contesto RAG non è fidato** | I chunk recuperati non entrano mai nel system prompt. Viaggiano in un messaggio `user` separato tra tag `<documents>` (i tag presenti nei chunk vengono rimossi), e il system prompt dice al modello di non seguire istruzioni trovate lì. |
 | **Lavoro limitato per richiesta** | `Document` limita il testo a 50.000 caratteri, l'id a 256, i metadati a 16 voci con chiavi ≤ 64 e valori testuali ≤ 256 caratteri. I payload troppo grandi ricevono 422 prima di qualsiasi embedding. I client Ollama hanno un timeout di 60 s, così un backend bloccato non occupa un thread per sempre. |
 | **Ricerca ibrida con RRF** | Gli embedding non colgono identificatori esatti (codici d'errore, SKU) che BM25 trova, e viceversa. Ogni ricerca contribuisce con i suoi primi `4·k` risultati; lo score di un chunk è `Σ 1/(60 + rank)` sulle due classifiche, quindi non serve normalizzare score di metodi diversi. Un chunk primo in entrambe vale `2/61 ≈ 0,033`. |
 | **Structured outputs** | `generate(..., response_format=Model)` passa a Ollama lo JSON Schema del modello (`format=`) e valida la risposta, perché lo schema guida soltanto la generazione. |
 | **Logging strutturato** | Loguru scrive su stderr un oggetto JSON per riga. Ogni conversazione gira dentro `logger.contextualize(conversation_id=...)`, quindi anche i log di retrieval e LLM di quella sessione portano l'id. Il testo del task e delle risposte non viene mai loggato. |
-| **503 se il backend non risponde** | Se Ollama è giù il client riceve un *Service Unavailable* che si può ritentare, non un 500 generico. |
-| **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM) e `k ≤ 50` sono imposti a livello di API. |
+| **503/504 generici sui guasti del backend** | Ollama irraggiungibile o in errore (per esempio modello non scaricato) dà **503**, un timeout dà **504**. Le risposte hanno un messaggio fisso; il testo dell'eccezione, che può contenere host o nomi di modelli, arriva solo nei log come tipo di eccezione. La telemetria di ChromaDB è disattivata. |
+| **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM), `k ≤ 50`, query ≤ 1.000 caratteri, task ≤ 4.000, al massimo 8 agenti, nome agente ≤ 64, system prompt ≤ 4.000, `stop_token` ≤ 64: tutti imposti a livello di API. |
 | **Dipendenze create alla prima richiesta** | Importare l'app non apre connessioni né crea cartelle, quindi test e strumenti non hanno effetti collaterali. |
 | **PyTorch solo CPU** | L'indice CPU di PyTorch evita di scaricare circa 2 GB di librerie CUDA nell'immagine. |
 
@@ -284,7 +288,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Ingerire di nuovo lo stesso `id` sostituisce tutti i chunk precedenti. I valori di `metadata` devono essere semplici: testo, numero o booleano. Limiti: `text` ≤ 50.000 caratteri, `id` ≤ 256, al massimo 16 voci di metadati, chiavi ≤ 64 e valori testuali ≤ 256 caratteri; oltre si riceve 422.
+Ingerire di nuovo lo stesso `id` pubblica una nuova versione che, per chi legge, sostituisce la precedente in modo atomico; un contenuto identico non fa nulla. I valori di `metadata` devono essere semplici: testo, numero o booleano. Limiti: `text` ≤ 50.000 caratteri, `id` ≤ 256, al massimo 16 voci di metadati, chiavi ≤ 64 e valori testuali ≤ 256 caratteri; oltre si riceve 422.
 
 ### `POST /query`
 
@@ -298,7 +302,7 @@ curl -X POST http://localhost:8000/query \
   "results": [
     {
       "chunk": {
-        "id": "caching-guide:0",
+        "id": "caching-guide:5f0c2a9e41d7b3c8:0",
         "document_id": "caching-guide",
         "index": 0,
         "text": "Redis supports per-key TTL expiration. An LRU policy evicts ...",
@@ -377,8 +381,9 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | Stato | Quando |
 |---|---|
 | `201` | Documento ingerito |
-| `422` | Errore di validazione: query o task vuoti, `k`/`max_turns` fuori intervallo, nomi di agenti duplicati, campi sconosciuti, metadata non semplici |
-| `503` | Ollama non raggiungibile (`{"detail": "model backend unavailable: ..."}`); la richiesta si può ritentare |
+| `422` | Errore di validazione: query o task vuoti o troppo lunghi, troppi agenti, `k`/`max_turns` fuori intervallo, nomi di agenti duplicati, campi sconosciuti, metadata non semplici |
+| `503` | Ollama non raggiungibile (`{"detail": "model backend unavailable"}`) o in errore, per esempio modello mancante (`"model backend error"`); la richiesta si può ritentare |
+| `504` | Timeout di Ollama (`{"detail": "model backend timed out"}`); la richiesta si può ritentare |
 
 ---
 
@@ -402,9 +407,27 @@ Questi limiti sono elencati di proposito: sono le prossime iterazioni, non debit
 - **L'indice BM25 viene ricostruito da ChromaDB a ogni query.** È sempre coerente con ingestioni concorrenti e altri processi, ma costa O(corpus) per query; per corpus grandi va messo in cache per versione dello store.
 - **Una richiesta di embedding per chunk.** L'API `embed` di Ollama accetta più testi insieme; raggrupparli velocizzerebbe le ingestioni grandi.
 - **Nessuna autenticazione né rate limiting.** Metti l'API dietro un gateway prima di esporla.
+- **I lock di ingestione valgono per singolo processo.** Usa un solo processo API per store, oppure aggiungi un lock condiviso, prima di scalare i worker.
+- **Aggiornamento da uno store precedente al versionamento:** i chunk scritti prima non hanno una versione attiva e non vengono restituiti. Reingerisci quei documenti; i vecchi chunk vengono rimossi durante quell'ingestione.
 - **Chiamate all'LLM sincrone.** Le conversazioni lunghe occupano un thread; streaming e client async sono il passo successivo naturale.
 - **`ollama/ollama:latest` non è fissato a una versione.** Per deploy riproducibili va fissata.
 - **Modello e dimensione degli embedding non sono ancora configurabili** tramite variabili d'ambiente.
+
+## Sviluppi Futuri (Roadmap MLOps)
+
+Le prossime iterazioni portano il progetto verso un sistema LLMOps riproducibile e osservabile, mantenendo lo stack attuale. Il punto di partenza è un audit del codice così com'è oggi, eseguito il 30/10/2026. Piano completo, vincoli e criteri di accettazione: **[docs/MLOPS_ROADMAP_IT.md](docs/MLOPS_ROADMAP_IT.md)**.
+
+| Fase | Tema | Risultato |
+|---|---|---|
+| 1 | **Valutazione del RAG** | Benchmark versionato; Recall@k, MRR, nDCG@k per ricerca vettoriale, BM25 e ibrida; soglie di regressione |
+| 2 | **Versionamento dell'ingestion** | Id per documento, versione e chunk; attivazione sicura delle nuove versioni; aggiornamenti concorrenti o falliti gestiti |
+| 3 | **CI/CD** | GitHub Actions: lint, mypy, test, scansione delle vulnerabilità, build Docker e health check a ogni PR |
+| 4 | **Experiment tracking** | Ogni esecuzione ricostruibile da commit, modelli, dataset e parametri (MLflow o manifest JSON versionati) |
+| 5 | **Observability** | Metriche per endpoint, latenze, errori di Ollama, health check separati per liveness e readiness |
+| 6 | **Security hardening** | Autenticazione, rate limiting, difese da prompt injection, gestione di segreti e dati |
+| 7 | **Deployment controllato** | Immagini versionate, smoke test, rilascio documentato, rollback, backup e ripristino |
+
+Stato: la Fase 2 (versionamento dell'ingestion) è **implementata**, con lock solo nel singolo processo. La Fase 6 è **parziale**: mappatura degli errori, limiti di input, isolamento da prompt injection e telemetria di ChromaDB sono fatti; autenticazione e rate limiting no. Le altre fasi sono **pianificate**.
 
 ---
 

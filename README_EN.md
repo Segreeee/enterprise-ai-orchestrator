@@ -27,6 +27,7 @@
 - [API reference and examples](#api-reference-and-examples)
 - [Configuration](#configuration)
 - [Known limitations and roadmap](#known-limitations-and-roadmap)
+- [Future Developments (MLOps Roadmap)](#future-developments-mlops-roadmap)
 
 ---
 
@@ -94,7 +95,7 @@ For a richer, interactive version with per-flow explanations, open the
 | Module | Key types | Responsibility |
 |---|---|---|
 | `config.py` | `Settings` | Typed configuration from env vars (`OLLAMA_HOST` validated as `HttpUrl`) |
-| `api/app.py` | `create_app()` | App factory; maps `ConnectionError` to **503** |
+| `api/app.py` | `create_app()` | App factory; checks the store's embedding model at startup; maps Ollama failures to generic **503/504** |
 | `api/routes.py` | `/health`, `/ingest`, `/query`, `/conversations` | Thin HTTP layer, no business logic |
 | `api/schemas.py` | `QueryRequest`, `ConversationRequest`, … | Request/response contracts with limits (`k ≤ 50`, `max_turns ≤ 20`, unique agent names) |
 | `api/dependencies.py` | `get_llm`, `get_retriever`, `get_settings` | Lazily built singletons; replaced in tests via `dependency_overrides` |
@@ -106,14 +107,15 @@ For a richer, interactive version with per-flow explanations, open the
 | `rag/schemas.py` | `Document`, `Chunk`, `RetrievalResult` | RAG domain model; score constrained to `[0, 1]` |
 | `rag/chunker.py` | `Chunker` | Character windows with overlap; validated `overlap < size` |
 | `rag/store.py` | `VectorStore` | ChromaDB wrapper (ephemeral or persistent), cosine space, idempotent upsert, `all_chunks()` for the BM25 index |
-| `rag/retriever.py` | `Retriever` | `ingest(Document)` and hybrid `retrieve(query, k)` (vector + BM25, RRF) |
+| `rag/retriever.py` | `Retriever` | Versioned `ingest(Document)` with a per-document lock, and hybrid `retrieve(query, k)` (vector + BM25, RRF) over active versions only |
 
 ### How a conversation works
 
 1. `RoundRobin` selects the next agent. Rotation restarts on every run, so results are reproducible.
 2. If RAG is enabled, the `Retriever` searches with the task on turn 1 and with the latest reply afterwards, so context follows the discussion.
 3. The speaking agent receives:
-   - its own system prompt, plus a numbered `Relevant context` section;
+   - its own system prompt (plus, when there is RAG context, a fixed rule: retrieved documents are untrusted data);
+   - the retrieved chunks, numbered, in a separate `user` message inside `<documents>…</documents>`;
    - the task;
    - its own previous turns as `assistant` messages;
    - other agents' turns as `user` messages prefixed with `[agent-name]`.
@@ -129,13 +131,15 @@ For a richer, interactive version with per-flow explanations, open the
 | **`Protocol`s for `LLMClient` and `Embedder`** | The domain never imports a vendor SDK type. Swapping Ollama for another provider is a new class, not a refactor. Fakes need no mocking library. |
 | **Strict, frozen, `extra="forbid"` Pydantic models** | Typos in payloads fail loudly with a 422, and objects cannot be mutated after validation. |
 | **LLM output is re-validated** | An empty reply or an unexpected role from the model raises a `ValidationError` instead of silently corrupting the conversation. |
-| **Safe re-ingest** | New chunks are embedded and written first (upsert by chunk id); only then are the old version's surplus chunks deleted. A failing embedder or a rejected write leaves the previous version intact, and no stale chunks survive a shorter re-ingest. |
+| **Versioned ingestion** | Each ingest is a version: a hash of text, metadata, chunking and embedding model, so chunk ids are `{doc}:{version}:{i}`. The new version is written in full, then one upsert flips the document's pointer (in a `<collection>__system` collection) to it, then older chunks are deleted. Chroma has no multi-record transactions, but a single upsert is atomic, so readers see the old version or the new one, never a mix. A failure before the flip keeps the old version; leftovers are invisible and cleaned on the next ingest. Re-ingesting identical content is a no-op. A per-document lock serialises concurrent ingests of the same id. |
+| **Embedding model pinned to the store** | The store records the embedding model and dimension on first use; at startup a different model or dimension stops the app (`EmbeddingMismatchError`) instead of mixing vector spaces. |
+| **RAG context is untrusted** | Retrieved chunks never enter the system prompt. They travel in their own `user` message inside `<documents>` tags (tags inside chunks are stripped), and the system prompt tells the model not to follow instructions found there. |
 | **Bounded work per request** | `Document` caps text at 50,000 characters, the id at 256, metadata at 16 entries with keys ≤ 64 and string values ≤ 256 characters. Oversized payloads get a 422 before any embedding. Ollama clients use a 60 s timeout, so a hung backend cannot hold a worker thread forever. |
 | **Hybrid retrieval with RRF** | Embeddings miss exact identifiers (error codes, SKUs) that BM25 catches, and vice versa. Each search contributes its top `4·k`; a chunk's score is `Σ 1/(60 + rank)` over both rankings, so it needs no score normalisation across methods. A chunk ranked first by both scores `2/61 ≈ 0.033`. |
 | **Structured outputs** | `generate(..., response_format=Model)` sends the model's JSON Schema to Ollama (`format=`) and validates the reply against it, because the schema only guides sampling. |
 | **Structured logging** | Loguru writes one JSON object per line to stderr. Each conversation runs inside `logger.contextualize(conversation_id=...)`, so retrieval and LLM logs from that run share the id. Task and reply text are never logged. |
-| **503 on backend outage** | If Ollama is down, the client gets a retryable *Service Unavailable*, not an opaque 500. |
-| **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call) and `k ≤ 50` are enforced at the API boundary. |
+| **Generic 503/504 on backend failure** | Ollama unreachable or returning an error (e.g. model not pulled) gives **503**, a timeout gives **504**. Responses carry a fixed message; exception text, which can hold hosts or model names, only reaches the logs as an exception type. ChromaDB telemetry is disabled. |
+| **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call), `k ≤ 50`, query ≤ 1,000 characters, task ≤ 4,000, at most 8 agents, agent name ≤ 64, system prompt ≤ 4,000, `stop_token` ≤ 64 — all enforced at the API boundary. |
 | **Lazy dependency singletons** | Importing the app opens no connection and creates no directory, which keeps tests and tooling side-effect free. |
 | **CPU-only PyTorch wheels** | The PyTorch CPU index avoids pulling about 2 GB of CUDA libraries into the image. |
 
@@ -284,7 +288,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Re-ingesting the same `id` replaces all of its previous chunks. `metadata` values must be scalars (string, number or boolean). Limits: `text` ≤ 50,000 characters, `id` ≤ 256, at most 16 metadata entries, keys ≤ 64 and string values ≤ 256 characters; larger payloads return 422.
+Re-ingesting the same `id` publishes a new version that replaces the previous one atomically for readers; identical content is a no-op. `metadata` values must be scalars (string, number or boolean). Limits: `text` ≤ 50,000 characters, `id` ≤ 256, at most 16 metadata entries, keys ≤ 64 and string values ≤ 256 characters; larger payloads return 422.
 
 ### `POST /query`
 
@@ -298,7 +302,7 @@ curl -X POST http://localhost:8000/query \
   "results": [
     {
       "chunk": {
-        "id": "caching-guide:0",
+        "id": "caching-guide:5f0c2a9e41d7b3c8:0",
         "document_id": "caching-guide",
         "index": 0,
         "text": "Redis supports per-key TTL expiration. An LRU policy evicts ...",
@@ -377,8 +381,9 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | Status | When |
 |---|---|
 | `201` | Document ingested |
-| `422` | Validation failure: blank query or task, `k`/`max_turns` out of range, duplicate agent names, unknown fields, non-scalar metadata |
-| `503` | Ollama unreachable (`{"detail": "model backend unavailable: ..."}`), safe to retry |
+| `422` | Validation failure: blank or oversized query or task, too many agents, `k`/`max_turns` out of range, duplicate agent names, unknown fields, non-scalar metadata |
+| `503` | Ollama unreachable (`{"detail": "model backend unavailable"}`) or returning an error such as a missing model (`"model backend error"`), safe to retry |
+| `504` | Ollama timed out (`{"detail": "model backend timed out"}`), safe to retry |
 
 ---
 
@@ -402,9 +407,27 @@ These limits are listed on purpose; they are the next iterations, not hidden deb
 - **The BM25 index is rebuilt from ChromaDB on every query.** It is always consistent with concurrent ingests and other processes, but costs O(corpus) per query; cache it per store version for large corpora.
 - **One embedding request per chunk.** The Ollama `embed` API accepts batches; batching would speed up large ingests.
 - **No authentication or rate limiting.** Put the API behind a gateway before exposing it.
+- **Ingestion locks are per process.** Run one API process per store, or add a shared lock, before scaling out workers.
+- **Upgrading from a pre-versioning store:** chunks written before versioned ingestion have no active version and are not returned. Re-ingest those documents; the old chunks are removed on that ingest.
 - **Synchronous LLM calls.** Long conversations hold a worker thread; streaming and async clients are a natural next step.
 - **`ollama/ollama:latest` is not pinned.** Pin a version for reproducible deployments.
 - **Embedding model and dimension are not configurable** via environment variables yet.
+
+## Future Developments (MLOps Roadmap)
+
+The next iterations evolve the project into a reproducible, observable LLMOps system while keeping the current stack. They start from an audit of the code as it is today, done on 2026-10-30. Full plan, constraints and acceptance criteria: **[docs/MLOPS_ROADMAP_EN.md](docs/MLOPS_ROADMAP_EN.md)**.
+
+| Phase | Focus | Outcome |
+|---|---|---|
+| 1 | **RAG evaluation** | Versioned benchmark; Recall@k, MRR, nDCG@k for vector, BM25 and hybrid search; regression thresholds |
+| 2 | **Ingestion versioning** | Document/version/chunk ids, safe activation of new versions, concurrent and failed updates handled |
+| 3 | **CI/CD** | GitHub Actions: lint, mypy, tests, vulnerability scans, Docker build and health check on every PR |
+| 4 | **Experiment tracking** | Every run traceable to commit, models, dataset and parameters (MLflow or versioned JSON manifests) |
+| 5 | **Observability** | Per-endpoint metrics, latency, Ollama errors, separate liveness and readiness checks |
+| 6 | **Security hardening** | Authentication, rate limiting, prompt-injection defences, secrets and data handling |
+| 7 | **Controlled deployment** | Versioned images, smoke tests, documented release, rollback, backup and restore |
+
+Status: Phase 2 (ingestion versioning) is **implemented**, with an in-process lock only. Phase 6 is **partial**: error mapping, input limits, prompt-injection isolation and Chroma telemetry are done; authentication and rate limiting are not. The other phases are **planned**.
 
 ---
 

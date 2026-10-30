@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\candidate.json",
+    "sha256": "39f864b013601daf3ca6c81f5b351cf76c5411f45b7c888b03ec4ff301792ff9",
+    "bytes": 6992
+  },
+  "artifact": {
+    "path": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\data-flow.html",
+    "sha256": "f81b9d7165c44a144fa306e277b01d35e9c48fe6c6ca3b708402885be48a739d",
+    "bytes": 846095
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\review-3\\data-flow.finalize.json",
+    "summaryReceipt": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\review-3\\data-flow.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Users\\39342\\Desktop\\enterprise-ai-orchestrator\\docs\\data-flow\\review-3\\data-flow.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-29T14:50:26.053Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 4543,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  },
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 2
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "flip-pointer",
+            "from": "retriever",
+            "to": "system",
+            "label": "flip pointer",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "bends": 4,
+          "stretch": 1.098
+        },
+        {
+          "relationship": {
+            "id": "active-versions",
+            "from": "system",
+            "to": "retriever",
+            "label": "active versions",
+            "collectionIndex": 8,
+            "artifactIndex": 9
+          },
+          "bends": 4,
+          "stretch": 1.1
+        }
+      ],
+      "truncated": false
+    },
+    "repair": "Advisory only: this mode places or routes these relationships itself. Report them; do not remove relationships or meaning to reduce crossings."
+  }
+}

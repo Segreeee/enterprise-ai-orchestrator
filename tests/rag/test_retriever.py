@@ -1,9 +1,14 @@
+import re
+import threading
+import time
+
 import pytest
 from chromadb.errors import ChromaError
 
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import RRF_K, Retriever, _bm25_ranking
 from orchestrator.rag.schemas import Chunk, Document, RetrievalResult
+from orchestrator.rag.store import EmbeddingMismatchError
 
 
 @pytest.fixture
@@ -29,6 +34,7 @@ def test_failed_reingest_keeps_previous_version(retriever, store):
     retriever.ingest(Document(id="pets", text="my cat"))
 
     class DownEmbedder:
+        model = "keyword-test"
         dimension = 3
 
         def embed(self, text: str):
@@ -45,7 +51,7 @@ def test_failed_reingest_keeps_previous_version(retriever, store):
 def test_failed_store_write_keeps_previous_version(retriever, store, monkeypatch):
     retriever.ingest(Document(id="pets", text="my cat"))
 
-    def reject(chunks, embeddings):
+    def reject(chunks, embeddings, version=None):
         raise RuntimeError("store rejected the write")
 
     monkeypatch.setattr(store, "add", reject)
@@ -157,3 +163,139 @@ def test_bm25_orders_lexical_matches_by_score():
     texts = ["a zebra among many other different words", "zebra zebra", "cat", "dog", "car"]
     corpus = [Chunk(id=f"d:{i}", document_id="d", index=i, text=t) for i, t in enumerate(texts)]
     assert [c.text for c in _bm25_ranking("zebra", corpus)] == ["zebra zebra", texts[0]]
+
+
+
+# --- versioned ingestion ------------------------------------------------------------
+
+OLD, NEW = "OLD " * 25, "NEW " * 10  # 5 chunks and 2 chunks of 20 characters
+
+
+def visible_texts(retriever) -> list[str]:
+    return [r.chunk.text for r in retriever.retrieve("old new", k=50)]
+
+
+def test_chunk_ids_carry_the_document_version(retriever):
+    retriever.ingest(Document(id="pets", text="my cat"))
+    first = retriever.retrieve("cat", k=1)[0].chunk.id
+    retriever.ingest(Document(id="pets", text="my other cat"))
+    second = retriever.retrieve("cat", k=1)[0].chunk.id
+
+    assert re.fullmatch(r"pets:[0-9a-f]{16}:0", first)
+    assert re.fullmatch(r"pets:[0-9a-f]{16}:0", second)
+    assert first != second
+
+
+def test_identical_reingest_is_a_noop(retriever, embedder):
+    doc = Document(id="pets", text="my cat is lazy", metadata={"source": "a.txt"})
+    assert retriever.ingest(doc) == 1
+    embedder.calls.clear()
+
+    assert retriever.ingest(doc) == 1
+    assert embedder.calls == []
+
+    retriever.ingest(Document(id="pets", text="my cat is lazy", metadata={"source": "b.txt"}))
+    assert embedder.calls == ["my cat is lazy"]
+
+
+def test_readers_never_see_a_half_written_version(retriever, store, monkeypatch):
+    retriever.ingest(Document(id="doc", text=OLD))
+    seen_before_activation: list[list[str]] = []
+    activate = store.activate
+
+    def probe_then_activate(*args, **kwargs):
+        # The new chunks are fully written now, but not yet the active version.
+        seen_before_activation.append(visible_texts(retriever))
+        activate(*args, **kwargs)
+
+    monkeypatch.setattr(store, "activate", probe_then_activate)
+    retriever.ingest(Document(id="doc", text=NEW))
+
+    assert seen_before_activation == [["OLD OLD OLD OLD OLD "] * 5]
+    assert visible_texts(retriever) == ["NEW NEW NEW NEW NEW "] * 2
+
+
+def test_failed_activation_keeps_previous_version_and_next_ingest_cleans_up(retriever, store, monkeypatch):
+    retriever.ingest(Document(id="doc", text=OLD))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("system collection unavailable")
+
+    monkeypatch.setattr(store, "activate", fail)
+    with pytest.raises(RuntimeError):
+        retriever.ingest(Document(id="doc", text=NEW))
+    monkeypatch.undo()
+
+    assert visible_texts(retriever) == ["OLD OLD OLD OLD OLD "] * 5
+    assert retriever.ingest(Document(id="doc", text="dog " * 5)) == 1
+    assert store.count() == 1
+
+
+def run_concurrently(*targets) -> None:
+    errors: list[BaseException] = []
+
+    def guarded(target):
+        try:
+            target()
+        except BaseException as exc:  # surfaced below: a thread's exception would otherwise vanish
+            errors.append(exc)
+
+    threads = [threading.Thread(target=guarded, args=(t,)) for t in targets]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not errors, errors
+
+
+def test_concurrent_reingests_of_a_document_are_serialised(retriever, store, monkeypatch):
+    events: list[str | None] = []
+    add = store.add
+
+    def slow_add(chunks, embeddings, version=None):
+        events.append(version)
+        time.sleep(0.05)  # widens the window in which an unserialised ingest would interleave
+        add(chunks, embeddings, version=version)
+        events.append(version)
+
+    monkeypatch.setattr(store, "add", slow_add)
+    start = threading.Barrier(2)
+
+    def ingest(text: str):
+        return lambda: (start.wait(), retriever.ingest(Document(id="doc", text=text)))
+
+    run_concurrently(ingest("AAAA " * 20), ingest("BBBB " * 8))
+
+    assert events[0] == events[1] and events[2] == events[3]
+    visible = retriever.retrieve("aaaa bbbb", k=50)
+    words = {r.chunk.text.split()[0] for r in visible}
+    assert len(words) == 1
+    assert len(visible) == store.count() == (5 if words == {"AAAA"} else 2)
+
+
+def test_ingests_of_different_documents_do_not_wait_for_each_other(retriever, store, monkeypatch):
+    in_slow_add, other_done = threading.Event(), threading.Event()
+    waited: list[bool] = []
+    add = store.add
+
+    def blocking_add(chunks, embeddings, version=None):
+        if chunks and chunks[0].document_id == "slow":
+            in_slow_add.set()
+            waited.append(other_done.wait(timeout=2))
+        add(chunks, embeddings, version=version)
+
+    monkeypatch.setattr(store, "add", blocking_add)
+    slow = threading.Thread(target=retriever.ingest, args=(Document(id="slow", text="cat"),))
+    slow.start()
+    assert in_slow_add.wait(timeout=2)
+    retriever.ingest(Document(id="fast", text="dog"))
+    other_done.set()
+    slow.join(timeout=5)
+
+    assert waited == [True]
+
+
+def test_retriever_refuses_a_store_built_with_another_embedding_model(embedder, store):
+    store.check_embedding("nomic-embed-text", 768)
+    with pytest.raises(EmbeddingMismatchError):
+        Retriever(embedder=embedder, store=store)
