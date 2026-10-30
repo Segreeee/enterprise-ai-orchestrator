@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import chromadb
 import pytest
+from loguru import logger
 
 from orchestrator.rag.store import VectorStore
 from tests.fakes import KeywordEmbedder, ScriptedLLM
@@ -37,3 +38,12 @@ def silent_server() -> Iterator[str]:
         hang_up.start()
         yield f"http://127.0.0.1:{server.getsockname()[1]}"
         hang_up.cancel()
+
+
+@pytest.fixture
+def log_records() -> Iterator[list[dict]]:
+    """Every loguru record emitted during the test, at any level."""
+    records: list[dict] = []
+    handler = logger.add(lambda message: records.append(message.record), level="DEBUG")
+    yield records
+    logger.remove(handler)

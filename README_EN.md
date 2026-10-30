@@ -37,7 +37,7 @@ The Enterprise AI Orchestrator exposes three capabilities over HTTP:
 | Capability | Endpoint | What it does |
 |---|---|---|
 | **Knowledge ingestion** | `POST /ingest` | Splits a document into overlapping chunks, embeds them with Ollama and stores them in ChromaDB |
-| **Semantic search** | `POST /query` | Embeds a question and returns the most similar chunks with a normalised `[0, 1]` score |
+| **Hybrid search** | `POST /query` | Ranks chunks with both vector similarity (ChromaDB) and BM25 keyword matching, fused with Reciprocal Rank Fusion |
 | **Multi-agent reasoning** | `POST /conversations` | Runs several LLM agents in strict round-robin order on a shared task, optionally grounding each turn with RAG context |
 
 ### Goals
@@ -101,12 +101,12 @@ For a richer, interactive version with per-flow explanations, open the
 | `agents/schemas.py` | `Message`, `AgentSpec`, `Turn`, `Conversation` | Conversation domain model |
 | `agents/round_robin.py` | `RoundRobin` | Pure scheduler: fixed cyclic order, rejects empty or duplicate rosters |
 | `agents/orchestrator.py` | `Orchestrator` | Turn loop: picks the agent, builds its prompt, injects RAG context, calls the LLM, stops on `max_turns` or `stop_token` |
-| `models/llm.py` | `LLMClient` (Protocol), `OllamaClient` | `generate(list[Message]) -> Message` |
+| `models/llm.py` | `LLMClient` (Protocol), `OllamaClient` | `generate(list[Message], response_format=None) -> Message`; with a Pydantic model, the reply is JSON valid against it |
 | `models/embeddings.py` | `Embedder` (Protocol), `OllamaEmbedder`, `Embedding` | Text to a fixed-dimension, finite vector (dimension checked by Pydantic) |
 | `rag/schemas.py` | `Document`, `Chunk`, `RetrievalResult` | RAG domain model; score constrained to `[0, 1]` |
 | `rag/chunker.py` | `Chunker` | Character windows with overlap; validated `overlap < size` |
-| `rag/store.py` | `VectorStore` | ChromaDB wrapper (ephemeral or persistent), cosine space, idempotent upsert |
-| `rag/retriever.py` | `Retriever` | `ingest(Document)` and `retrieve(query, k)` |
+| `rag/store.py` | `VectorStore` | ChromaDB wrapper (ephemeral or persistent), cosine space, idempotent upsert, `all_chunks()` for the BM25 index |
+| `rag/retriever.py` | `Retriever` | `ingest(Document)` and hybrid `retrieve(query, k)` (vector + BM25, RRF) |
 
 ### How a conversation works
 
@@ -131,7 +131,9 @@ For a richer, interactive version with per-flow explanations, open the
 | **LLM output is re-validated** | An empty reply or an unexpected role from the model raises a `ValidationError` instead of silently corrupting the conversation. |
 | **Safe re-ingest** | New chunks are embedded and written first (upsert by chunk id); only then are the old version's surplus chunks deleted. A failing embedder or a rejected write leaves the previous version intact, and no stale chunks survive a shorter re-ingest. |
 | **Bounded work per request** | `Document` caps text at 50,000 characters, the id at 256, metadata at 16 entries with keys ≤ 64 and string values ≤ 256 characters. Oversized payloads get a 422 before any embedding. Ollama clients use a 60 s timeout, so a hung backend cannot hold a worker thread forever. |
-| **Cosine distance mapped to `[0, 1]`** | Chroma returns a distance in `[0, 2]`; `score = 1 - d/2`, clamped, gives clients an intuitive similarity. |
+| **Hybrid retrieval with RRF** | Embeddings miss exact identifiers (error codes, SKUs) that BM25 catches, and vice versa. Each search contributes its top `4·k`; a chunk's score is `Σ 1/(60 + rank)` over both rankings, so it needs no score normalisation across methods. A chunk ranked first by both scores `2/61 ≈ 0.033`. |
+| **Structured outputs** | `generate(..., response_format=Model)` sends the model's JSON Schema to Ollama (`format=`) and validates the reply against it, because the schema only guides sampling. |
+| **Structured logging** | Loguru writes one JSON object per line to stderr. Each conversation runs inside `logger.contextualize(conversation_id=...)`, so retrieval and LLM logs from that run share the id. Task and reply text are never logged. |
 | **503 on backend outage** | If Ollama is down, the client gets a retryable *Service Unavailable*, not an opaque 500. |
 | **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call) and `k ≤ 50` are enforced at the API boundary. |
 | **Lazy dependency singletons** | Importing the app opens no connection and creates no directory, which keeps tests and tooling side-effect free. |
@@ -302,7 +304,7 @@ curl -X POST http://localhost:8000/query \
         "text": "Redis supports per-key TTL expiration. An LRU policy evicts ...",
         "metadata": {"source": "caching.md"}
       },
-      "score": 0.797
+      "score": 0.0328
     }
   ]
 }
@@ -397,6 +399,7 @@ The embedding model is `nomic-embed-text` (768 dimensions), the default of `Olla
 These limits are listed on purpose; they are the next iterations, not hidden debt.
 
 - **PyTorch is installed but not used yet.** Embeddings come from Ollama. It is there for a planned local embedder or fine-tuning step, and it accounts for most of the 2 GB image. Remove it from `requirements.txt` if you do not need it.
+- **The BM25 index is rebuilt from ChromaDB on every query.** It is always consistent with concurrent ingests and other processes, but costs O(corpus) per query; cache it per store version for large corpora.
 - **One embedding request per chunk.** The Ollama `embed` API accepts batches; batching would speed up large ingests.
 - **No authentication or rate limiting.** Put the API behind a gateway before exposing it.
 - **Synchronous LLM calls.** Long conversations hold a worker thread; streaming and async clients are a natural next step.

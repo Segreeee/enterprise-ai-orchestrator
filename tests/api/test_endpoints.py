@@ -36,6 +36,13 @@ def ingest(client: TestClient, doc_id: str, text: str, **extra):
 # --- /ingest ---------------------------------------------------------------
 
 
+def test_ingest_logs_document_id_and_chunk_count(client, log_records):
+    ingest(client, "pets", "my cat is a lazy cat and my dog is fast")
+
+    events = [r["extra"] for r in log_records if r["extra"].get("document_id") == "pets"]
+    assert events and events[-1]["chunks"] == 2
+
+
 def test_ingest_returns_created_with_chunk_count(client, store):
     response = ingest(client, "pets", "my cat is a lazy cat and my dog is fast", metadata={"source": "a.txt"})
 

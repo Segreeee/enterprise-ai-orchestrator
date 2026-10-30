@@ -1,6 +1,8 @@
 from collections.abc import Sequence
-from typing import Annotated
+from typing import Annotated, Literal
+from uuid import uuid4
 
+from loguru import logger
 from pydantic import PositiveInt, StringConstraints, validate_call
 
 from orchestrator.agents.round_robin import RoundRobin
@@ -29,16 +31,24 @@ class Orchestrator:
 
     @validate_call
     def run(self, task: Task, max_turns: PositiveInt, stop_token: str | None = None) -> Conversation:
-        scheduler = RoundRobin(self._agents)
-        turns: list[Turn] = []
-        for _ in range(max_turns):
-            agent = scheduler.next()
-            query = turns[-1].message.content if turns else task
-            reply = self._llm.generate(self._prompt(agent, task, turns, self._context(query)))
-            turns.append(Turn(agent=agent.name, message=reply))
-            if stop_token and stop_token in reply.content:
-                return Conversation(task=task, turns=turns, stop_reason="stop_token")
-        return Conversation(task=task, turns=turns, stop_reason="max_turns")
+        # contextualize (not bind) so logs from the retriever and LLM calls inside the run carry the id too.
+        # Task and reply text stay out of the logs: they can hold user data.
+        with logger.contextualize(conversation_id=uuid4().hex):
+            logger.info("conversation started", agents=len(self._agents), max_turns=max_turns)
+            scheduler = RoundRobin(self._agents)
+            turns: list[Turn] = []
+            stop_reason: Literal["max_turns", "stop_token"] = "max_turns"
+            for _ in range(max_turns):
+                agent = scheduler.next()
+                query = turns[-1].message.content if turns else task
+                reply = self._llm.generate(self._prompt(agent, task, turns, self._context(query)))
+                turns.append(Turn(agent=agent.name, message=reply))
+                logger.debug("turn completed", agent=agent.name, turn=len(turns))
+                if stop_token and stop_token in reply.content:
+                    stop_reason = "stop_token"
+                    break
+            logger.info("conversation finished", stop_reason=stop_reason, turns=len(turns))
+            return Conversation(task=task, turns=turns, stop_reason=stop_reason)
 
     def _context(self, query: str) -> str:
         if self._retriever is None:

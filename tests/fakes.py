@@ -2,6 +2,8 @@
 
 from collections.abc import Sequence
 
+from pydantic import BaseModel
+
 from orchestrator.agents.schemas import Message
 from orchestrator.models.embeddings import Embedding
 from orchestrator.rag.schemas import Chunk, RetrievalResult
@@ -16,7 +18,7 @@ class ScriptedLLM:
         self._replies = list(replies or [])
         self.calls: list[list[Message]] = []
 
-    def generate(self, messages: Sequence[Message]) -> Message:
+    def generate(self, messages: Sequence[Message], response_format: type[BaseModel] | None = None) -> Message:
         self.calls.append(list(messages))
         n = len(self.calls)
         content = self._replies[n - 1] if n <= len(self._replies) else f"reply {n}"

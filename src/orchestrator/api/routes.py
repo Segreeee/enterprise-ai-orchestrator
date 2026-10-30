@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from loguru import logger
 
 from orchestrator import __version__
 from orchestrator.agents.orchestrator import Orchestrator
@@ -30,12 +31,16 @@ def health() -> HealthResponse:
 
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
 def ingest(document: Document, retriever: RetrieverDep) -> IngestResponse:
-    return IngestResponse(document_id=document.id, chunks=retriever.ingest(document))
+    chunks = retriever.ingest(document)
+    logger.info("document ingested", document_id=document.id, chunks=chunks)
+    return IngestResponse(document_id=document.id, chunks=chunks)
 
 
 @router.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest, retriever: RetrieverDep) -> QueryResponse:
-    return QueryResponse(results=retriever.retrieve(request.query, k=request.k))
+    results = retriever.retrieve(request.query, k=request.k)
+    logger.info("query served", k=request.k, results=len(results))
+    return QueryResponse(results=results)
 
 
 @router.post("/conversations", response_model=Conversation)

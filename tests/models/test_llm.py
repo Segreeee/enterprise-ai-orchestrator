@@ -3,14 +3,22 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from orchestrator.agents.schemas import Message
 from orchestrator.models.llm import DEFAULT_TIMEOUT, LLMClient, OllamaClient
 
 
+class Verdict(BaseModel):
+    approved: bool
+    reason: str
+
+
 class FakeLLMClient:
-    def generate(self, messages: Sequence[Message]) -> Message:
+    def generate(self, messages: Sequence[Message], response_format: type[BaseModel] | None = None) -> Message:
+        if response_format is not None:
+            reply = response_format.model_validate({"approved": True, "reason": messages[-1].content})
+            return Message(role="assistant", content=reply.model_dump_json())
         return Message(role="assistant", content=f"echo: {messages[-1].content}")
 
 
@@ -39,6 +47,11 @@ def test_fake_client_honours_contract():
     assert reply == Message(role="assistant", content="echo: Hi")
 
 
+def test_fake_client_returns_json_for_response_format():
+    reply = FakeLLMClient().generate(CONVERSATION, response_format=Verdict)
+    assert Verdict.model_validate_json(reply.content) == Verdict(approved=True, reason="Hi")
+
+
 def test_ollama_client_satisfies_protocol():
     assert isinstance(OllamaClient(model="m", client=StubOllama()), LLMClient)
 
@@ -55,8 +68,25 @@ def test_ollama_client_sends_messages_and_maps_reply():
                 {"role": "system", "content": "You are terse."},
                 {"role": "user", "content": "Hi"},
             ],
+            "format": None,
         }
     ]
+
+
+def test_ollama_client_constrains_reply_to_response_format_schema():
+    stub = StubOllama(content='{"approved": false, "reason": "missing tests"}')
+    reply = OllamaClient(model="m", client=stub).generate(CONVERSATION, response_format=Verdict)
+
+    assert stub.calls[0]["format"] == Verdict.model_json_schema()
+    assert Verdict.model_validate_json(reply.content) == Verdict(approved=False, reason="missing tests")
+
+
+@pytest.mark.parametrize("content", ['{"approved": "maybe", "reason": "x"}', '{"approved": true}', "not json"])
+def test_ollama_client_rejects_reply_not_matching_response_format(content):
+    # The schema only guides generation; a reply that still breaks it must not reach callers.
+    stub = StubOllama(content=content)
+    with pytest.raises(ValidationError):
+        OllamaClient(model="m", client=stub).generate(CONVERSATION, response_format=Verdict)
 
 
 def test_ollama_client_rejects_empty_conversation():

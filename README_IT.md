@@ -37,7 +37,7 @@ L'Enterprise AI Orchestrator espone tre funzionalità via HTTP:
 | Funzionalità | Endpoint | Cosa fa |
 |---|---|---|
 | **Ingestione della conoscenza** | `POST /ingest` | Divide un documento in chunk sovrapposti, ne calcola gli embedding con Ollama e li salva in ChromaDB |
-| **Ricerca semantica** | `POST /query` | Calcola l'embedding della domanda e restituisce i chunk più simili, con uno score normalizzato in `[0, 1]` |
+| **Ricerca ibrida** | `POST /query` | Ordina i chunk sia per similarità vettoriale (ChromaDB) sia per corrispondenza di parole chiave BM25, fondendo le due classifiche con Reciprocal Rank Fusion |
 | **Ragionamento multi-agente** | `POST /conversations` | Fa lavorare più agenti LLM in ordine round-robin rigoroso su un task condiviso; a ogni turno può aggiungere contesto RAG |
 
 ### Obiettivi
@@ -101,12 +101,12 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | `agents/schemas.py` | `Message`, `AgentSpec`, `Turn`, `Conversation` | Modello di dominio della conversazione |
 | `agents/round_robin.py` | `RoundRobin` | Scheduler puro: ordine ciclico fisso, rifiuta liste vuote o con duplicati |
 | `agents/orchestrator.py` | `Orchestrator` | Loop dei turni: sceglie l'agente, costruisce il prompt, aggiunge il contesto RAG, chiama l'LLM, si ferma a `max_turns` o allo `stop_token` |
-| `models/llm.py` | `LLMClient` (Protocol), `OllamaClient` | `generate(list[Message]) -> Message` |
+| `models/llm.py` | `LLMClient` (Protocol), `OllamaClient` | `generate(list[Message], response_format=None) -> Message`; con un modello Pydantic la risposta è JSON valido rispetto al modello |
 | `models/embeddings.py` | `Embedder` (Protocol), `OllamaEmbedder`, `Embedding` | Da testo a vettore di dimensione fissa e valori finiti (dimensione controllata da Pydantic) |
 | `rag/schemas.py` | `Document`, `Chunk`, `RetrievalResult` | Modello di dominio RAG; score vincolato a `[0, 1]` |
 | `rag/chunker.py` | `Chunker` | Finestre di caratteri con sovrapposizione; verifica che `overlap < size` |
-| `rag/store.py` | `VectorStore` | Wrapper di ChromaDB (in memoria o persistente), spazio coseno, upsert idempotente |
-| `rag/retriever.py` | `Retriever` | `ingest(Document)` e `retrieve(query, k)` |
+| `rag/store.py` | `VectorStore` | Wrapper di ChromaDB (in memoria o persistente), spazio coseno, upsert idempotente, `all_chunks()` per l'indice BM25 |
+| `rag/retriever.py` | `Retriever` | `ingest(Document)` e `retrieve(query, k)` ibrido (vettoriale + BM25, RRF) |
 
 ### Come funziona una conversazione
 
@@ -131,7 +131,9 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | **L'output dell'LLM viene rivalidato** | Una risposta vuota o con un ruolo inatteso solleva una `ValidationError` invece di corrompere in silenzio la conversazione. |
 | **La re-ingestione sostituisce il documento in modo sicuro** | I nuovi chunk vengono calcolati e scritti per primi (upsert per id del chunk); solo dopo si cancellano i chunk in eccesso della versione vecchia. Se l'embedding fallisce o ChromaDB rifiuta la scrittura resta la versione precedente, e una re-ingestione più corta non lascia chunk orfani. |
 | **Lavoro limitato per richiesta** | `Document` limita il testo a 50.000 caratteri, l'id a 256, i metadati a 16 voci con chiavi ≤ 64 e valori testuali ≤ 256 caratteri. I payload troppo grandi ricevono 422 prima di qualsiasi embedding. I client Ollama hanno un timeout di 60 s, così un backend bloccato non occupa un thread per sempre. |
-| **Distanza coseno convertita in `[0, 1]`** | Chroma restituisce una distanza in `[0, 2]`; `score = 1 - d/2`, limitato all'intervallo, è una similarità intuitiva per il client. |
+| **Ricerca ibrida con RRF** | Gli embedding non colgono identificatori esatti (codici d'errore, SKU) che BM25 trova, e viceversa. Ogni ricerca contribuisce con i suoi primi `4·k` risultati; lo score di un chunk è `Σ 1/(60 + rank)` sulle due classifiche, quindi non serve normalizzare score di metodi diversi. Un chunk primo in entrambe vale `2/61 ≈ 0,033`. |
+| **Structured outputs** | `generate(..., response_format=Model)` passa a Ollama lo JSON Schema del modello (`format=`) e valida la risposta, perché lo schema guida soltanto la generazione. |
+| **Logging strutturato** | Loguru scrive su stderr un oggetto JSON per riga. Ogni conversazione gira dentro `logger.contextualize(conversation_id=...)`, quindi anche i log di retrieval e LLM di quella sessione portano l'id. Il testo del task e delle risposte non viene mai loggato. |
 | **503 se il backend non risponde** | Se Ollama è giù il client riceve un *Service Unavailable* che si può ritentare, non un 500 generico. |
 | **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM) e `k ≤ 50` sono imposti a livello di API. |
 | **Dipendenze create alla prima richiesta** | Importare l'app non apre connessioni né crea cartelle, quindi test e strumenti non hanno effetti collaterali. |
@@ -302,7 +304,7 @@ curl -X POST http://localhost:8000/query \
         "text": "Redis supports per-key TTL expiration. An LRU policy evicts ...",
         "metadata": {"source": "caching.md"}
       },
-      "score": 0.797
+      "score": 0.0328
     }
   ]
 }
@@ -397,6 +399,7 @@ Il modello di embedding è `nomic-embed-text` (768 dimensioni), il default di `O
 Questi limiti sono elencati di proposito: sono le prossime iterazioni, non debito nascosto.
 
 - **PyTorch è installato ma non ancora usato.** Gli embedding arrivano da Ollama. È presente per un embedder locale o un fine-tuning futuri, e occupa gran parte dei 2 GB dell'immagine. Se non ti serve, toglilo da `requirements.txt`.
+- **L'indice BM25 viene ricostruito da ChromaDB a ogni query.** È sempre coerente con ingestioni concorrenti e altri processi, ma costa O(corpus) per query; per corpus grandi va messo in cache per versione dello store.
 - **Una richiesta di embedding per chunk.** L'API `embed` di Ollama accetta più testi insieme; raggrupparli velocizzerebbe le ingestioni grandi.
 - **Nessuna autenticazione né rate limiting.** Metti l'API dietro un gateway prima di esporla.
 - **Chiamate all'LLM sincrone.** Le conversazioni lunghe occupano un thread; streaming e client async sono il passo successivo naturale.

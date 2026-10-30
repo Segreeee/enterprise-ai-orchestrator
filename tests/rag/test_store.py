@@ -71,3 +71,13 @@ def test_persistent_store_survives_reopen(tmp_path, embedder):
     chunk = make_chunk(0, "cat")
     VectorStore.persistent(tmp_path).add([chunk], [embedder.embed(chunk.text)])
     assert VectorStore.persistent(tmp_path).count() == 1
+
+
+def test_all_chunks_rebuilds_every_stored_chunk(store, embedder):
+    chunks = [make_chunk(0, "cat", source="a.txt"), make_chunk(1, "dog")]
+    store.add(chunks, [embedder.embed(c.text) for c in chunks])
+    assert sorted(store.all_chunks(), key=lambda c: c.index) == chunks
+
+
+def test_all_chunks_on_empty_store_is_empty(store):
+    assert store.all_chunks() == []

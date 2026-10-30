@@ -2,6 +2,9 @@ import pytest
 
 from orchestrator.agents.orchestrator import Orchestrator
 from orchestrator.agents.schemas import AgentSpec, Conversation, Message
+from orchestrator.rag.chunker import Chunker
+from orchestrator.rag.retriever import Retriever
+from orchestrator.rag.schemas import Document
 from tests.fakes import FakeRetriever, ScriptedLLM
 
 TASK = "Design a caching layer"
@@ -105,3 +108,45 @@ def test_invalid_agent_roster_rejected_at_construction():
         Orchestrator([], ScriptedLLM())
     with pytest.raises(ValueError, match="duplicate"):
         Orchestrator(agents("a", "a"), ScriptedLLM())
+
+
+# --- structured logging -------------------------------------------------------
+
+
+def test_every_log_of_a_run_carries_the_same_conversation_id(log_records):
+    Orchestrator(agents("a", "b"), ScriptedLLM()).run(TASK, max_turns=3)
+
+    ids = {r["extra"].get("conversation_id") for r in log_records}
+    assert len(ids) == 1 and None not in ids
+    assert [r["extra"]["agent"] for r in log_records if "agent" in r["extra"]] == ["a", "b", "a"]
+
+
+def test_each_run_gets_its_own_conversation_id(log_records):
+    orchestrator = Orchestrator(agents("a"), ScriptedLLM())
+    orchestrator.run(TASK, max_turns=1)
+    first = {r["extra"]["conversation_id"] for r in log_records}
+    log_records.clear()
+    orchestrator.run(TASK, max_turns=1)
+    second = {r["extra"]["conversation_id"] for r in log_records}
+
+    assert len(first) == len(second) == 1
+    assert first != second
+
+
+def test_logs_from_retrieval_inside_a_run_are_tagged_with_the_conversation(log_records, embedder, store):
+    retriever = Retriever(embedder=embedder, store=store, chunker=Chunker(chunk_size=20, chunk_overlap=0))
+    retriever.ingest(Document(id="pets", text="my cat"))
+    log_records.clear()
+
+    Orchestrator(agents("a"), ScriptedLLM(), retriever=retriever).run(TASK, max_turns=1)
+
+    retrieval = [r for r in log_records if r["name"] == "orchestrator.rag.retriever"]
+    assert retrieval
+    assert len({r["extra"].get("conversation_id") for r in log_records}) == 1
+
+
+def test_logs_never_contain_task_or_reply_text(log_records):
+    Orchestrator(agents("a"), ScriptedLLM(["secret reply"])).run(TASK, max_turns=1)
+
+    dumped = " ".join(f"{r['message']} {r['extra']}" for r in log_records)
+    assert TASK not in dumped and "secret reply" not in dumped

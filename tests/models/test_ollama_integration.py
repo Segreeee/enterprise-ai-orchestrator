@@ -41,6 +41,23 @@ def test_real_chat_round_trip(settings, available_models):
     assert reply.role == "assistant"
 
 
+def test_real_chat_honours_response_format(settings, available_models):
+    from pydantic import BaseModel
+
+    from orchestrator.models.llm import OllamaClient
+
+    class Capital(BaseModel):
+        country: str
+        capital: str
+
+    require(settings.model_name, available_models)
+    client = OllamaClient(model=settings.model_name, host=str(settings.ollama_host))
+    reply = client.generate(
+        [Message(role="user", content="What is the capital of France?")], response_format=Capital
+    )
+    assert Capital.model_validate_json(reply.content).capital.strip().lower() == "paris"
+
+
 def test_real_embedding_has_expected_dimension(settings, available_models):
     from orchestrator.models.embeddings import OllamaEmbedder
 

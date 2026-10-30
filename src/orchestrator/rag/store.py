@@ -4,7 +4,7 @@ from typing import Self
 
 import chromadb
 from chromadb.api import ClientAPI
-from chromadb.api.types import LiteralValue, LogicalOperator, PyEmbeddings, Where, WhereOperator
+from chromadb.api.types import LiteralValue, LogicalOperator, Metadata, PyEmbeddings, Where, WhereOperator
 from pydantic import PositiveInt, validate_call
 
 from orchestrator.models.embeddings import Embedding
@@ -48,6 +48,13 @@ class VectorStore:
             metadatas=[{**c.metadata, _DOC_ID: c.document_id, _INDEX: c.index} for c in chunks],
         )
 
+    def all_chunks(self) -> list[Chunk]:
+        res = self._collection.get(include=["documents", "metadatas"])
+        documents, metadatas = res["documents"], res["metadatas"]
+        if documents is None or metadatas is None:
+            raise RuntimeError("Chroma get omitted documents or metadatas")
+        return [_chunk(*hit) for hit in zip(res["ids"], documents, metadatas, strict=True)]
+
     @validate_call(config={"arbitrary_types_allowed": True})
     def search(self, embedding: Embedding, k: PositiveInt) -> list[RetrievalResult]:
         if self.count() == 0:
@@ -66,12 +73,15 @@ class VectorStore:
         for chunk_id, text, meta, distance in zip(
             res["ids"][0], documents[0], metadatas[0], distances[0], strict=True
         ):
-            user_meta = {key: value for key, value in meta.items() if key not in (_DOC_ID, _INDEX)}
-            # Rebuilt from stored data, so validate rather than trust the metadata types.
-            chunk = Chunk.model_validate(
-                {"id": chunk_id, "document_id": meta[_DOC_ID], "index": meta[_INDEX], "text": text, "metadata": user_meta}
-            )
             # Cosine distance is in [0, 2]; map to a similarity in [0, 1], clamping float noise.
             score = min(max(1.0 - distance / 2.0, 0.0), 1.0)
-            results.append(RetrievalResult(chunk=chunk, score=score))
+            results.append(RetrievalResult(chunk=_chunk(chunk_id, text, meta), score=score))
         return results
+
+
+def _chunk(chunk_id: str, text: str, meta: Metadata) -> Chunk:
+    user_meta = {key: value for key, value in meta.items() if key not in (_DOC_ID, _INDEX)}
+    # Rebuilt from stored data, so validate rather than trust the metadata types.
+    return Chunk.model_validate(
+        {"id": chunk_id, "document_id": meta[_DOC_ID], "index": meta[_INDEX], "text": text, "metadata": user_meta}
+    )
