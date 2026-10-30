@@ -10,6 +10,7 @@ RUN pip install -r requirements.txt
 FROM python:3.12-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app/src \
+    CHROMA_PATH=/data/chroma \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 # A named volume mounted on /data/chroma inherits this ownership, so the non-root user can write.

@@ -139,9 +139,9 @@ Per una versione più ricca e interattiva, con la spiegazione di ogni flusso, ap
 | **Structured outputs** | `generate(..., response_format=Model)` passa a Ollama lo JSON Schema del modello (`format=`) e valida la risposta, perché lo schema guida soltanto la generazione. |
 | **Logging strutturato** | Loguru scrive su stderr un oggetto JSON per riga. Ogni conversazione gira dentro `logger.contextualize(conversation_id=...)`, quindi anche i log di retrieval e LLM di quella sessione portano l'id. Il testo del task e delle risposte non viene mai loggato. |
 | **503/504 generici sui guasti del backend** | Ollama irraggiungibile o in errore (per esempio modello non scaricato) dà **503**, un timeout dà **504**. Le risposte hanno un messaggio fisso; il testo dell'eccezione, che può contenere host o nomi di modelli, arriva solo nei log come tipo di eccezione. La telemetria di ChromaDB è disattivata. |
-| **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM), `k ≤ 50`, query ≤ 1.000 caratteri, task ≤ 4.000, al massimo 8 agenti, nome agente ≤ 64, system prompt ≤ 4.000, `stop_token` ≤ 64: tutti imposti a livello di API. |
+| **Limiti rigidi sui fattori di costo** | `max_turns ≤ 20` (ogni turno è una chiamata all'LLM), `k ≤ 50`, query ≤ 1.000 caratteri, task ≤ 4.000, al massimo 8 agenti, nome agente ≤ 64, system prompt ≤ 4.000, `stop_token` ≤ 64: tutti imposti a livello di API. Il body grezzo della richiesta è limitato a 1 MB da un middleware ASGI **prima** del parsing (413), così i limiti sui campi limitano anche la memoria. |
+| **Superficie ridotta** | `TrustedHostMiddleware` risponde solo agli host in `ALLOWED_HOSTS` (default `localhost`, `127.0.0.1`, `orchestrator`), bloccando le pagine di DNS rebinding; `/docs`, `/redoc` e `/openapi.json` sono disattivati con `ENV=production`; compose pubblica l'API solo su `127.0.0.1`. |
 | **Dipendenze create alla prima richiesta** | Importare l'app non apre connessioni né crea cartelle, quindi test e strumenti non hanno effetti collaterali. |
-| **PyTorch solo CPU** | L'indice CPU di PyTorch evita di scaricare circa 2 GB di librerie CUDA nell'immagine. |
 
 ---
 
@@ -201,7 +201,7 @@ make run
 python -m uvicorn orchestrator.api.app:app --app-dir src --reload
 ```
 
-La documentazione OpenAPI interattiva è su <http://localhost:8000/docs>.
+La documentazione OpenAPI interattiva è su <http://localhost:8000/docs> (solo in sviluppo: è disattivata con `ENV=production`, il default di compose).
 
 > **Nota per Windows:** `make` non è installato di default (`choco install make`). Ogni target del
 > `Makefile` è un solo comando che puoi anche lanciare a mano.
@@ -241,7 +241,7 @@ make docker-down    # docker compose down
 |---|---|---|
 | `ollama` | `ollama/ollama` | Server dei modelli, con health check `ollama list`; i modelli restano nel volume `ollama-models` |
 | `ollama-init` | `ollama/ollama` | Job una tantum: scarica `${MODEL_NAME:-llama3.2}` e `nomic-embed-text`, poi termina |
-| `orchestrator` | costruita dal `Dockerfile` | L'API sulla porta **8000**; parte solo dopo che `ollama-init` è terminato con successo; ChromaDB resta nel volume `chroma-data` montato su `/data/chroma` |
+| `orchestrator` | costruita dal `Dockerfile` | L'API su `127.0.0.1:8000` (solo loopback), con `ENV=production`; parte solo dopo che `ollama-init` è terminato con successo; ChromaDB resta nel volume `chroma-data` montato su `/data/chroma` |
 
 Il primo avvio scarica i modelli (circa 2,3 GB) nel volume; quelli successivi li riusano.
 Per usare una GPU NVIDIA, togli il commento al blocco `deploy` del servizio `ollama` (richiede `nvidia-container-toolkit`).
@@ -250,7 +250,7 @@ Per usare una GPU NVIDIA, togli il commento al blocco `deploy` del servizio `oll
 
 ```bash
 make docker-build   # docker build -t enterprise-ai-orchestrator .
-make docker-run     # docker run --rm -p 8000:8000 enterprise-ai-orchestrator
+make docker-run     # docker run --rm -p 127.0.0.1:8000:8000 enterprise-ai-orchestrator
 ```
 
 L'immagine viene costruita in due stadi:
@@ -288,7 +288,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Ingerire di nuovo lo stesso `id` pubblica una nuova versione che, per chi legge, sostituisce la precedente in modo atomico; un contenuto identico non fa nulla. I valori di `metadata` devono essere semplici: testo, numero o booleano. Limiti: `text` ≤ 50.000 caratteri, `id` ≤ 256, al massimo 16 voci di metadati, chiavi ≤ 64 e valori testuali ≤ 256 caratteri; oltre si riceve 422.
+Ingerire di nuovo lo stesso `id` pubblica una nuova versione che, per chi legge, sostituisce la precedente in modo atomico; un contenuto identico non fa nulla. `text` deve contenere caratteri diversi dagli spazi. I valori di `metadata` devono essere semplici (testo, numero o booleano) e le chiavi che iniziano con `$`, `#` o `chroma:` sono riservate a ChromaDB e vengono rifiutate. Limiti: `text` ≤ 50.000 caratteri, `id` ≤ 256, al massimo 16 voci di metadati, chiavi ≤ 64 e valori testuali ≤ 256 caratteri; oltre si riceve 422.
 
 ### `POST /query`
 
@@ -381,6 +381,8 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | Stato | Quando |
 |---|---|
 | `201` | Documento ingerito |
+| `400` | Header `Host` non presente in `ALLOWED_HOSTS` |
+| `413` | Body della richiesta oltre 1 MB |
 | `422` | Errore di validazione: query o task vuoti o troppo lunghi, troppi agenti, `k`/`max_turns` fuori intervallo, nomi di agenti duplicati, campi sconosciuti, metadata non semplici |
 | `503` | Ollama non raggiungibile (`{"detail": "model backend unavailable"}`) o in errore, per esempio modello mancante (`"model backend error"`); la richiesta si può ritentare |
 | `504` | Timeout di Ollama (`{"detail": "model backend timed out"}`); la richiesta si può ritentare |
@@ -394,6 +396,8 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | `OLLAMA_HOST` | `http://localhost:11434` | Client LLM ed embedding (deve essere un URL `http(s)` valido) |
 | `CHROMA_PATH` | `chroma_db` | Cartella persistente di ChromaDB |
 | `MODEL_NAME` | `llama3.2` | Modello di chat usato dagli agenti |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,orchestrator` | Valori di `Host` accettati, separati da virgola |
+| `ENV` | `development` | `production` disattiva `/docs`, `/redoc` e `/openapi.json` (lo imposta compose) |
 
 Il modello di embedding è `nomic-embed-text` (768 dimensioni), il default di `OllamaEmbedder`.
 
@@ -403,10 +407,10 @@ Il modello di embedding è `nomic-embed-text` (768 dimensioni), il default di `O
 
 Questi limiti sono elencati di proposito: sono le prossime iterazioni, non debito nascosto.
 
-- **PyTorch è installato ma non ancora usato.** Gli embedding arrivano da Ollama. È presente per un embedder locale o un fine-tuning futuri, e occupa gran parte dei 2 GB dell'immagine. Se non ti serve, toglilo da `requirements.txt`.
 - **L'indice BM25 viene ricostruito da ChromaDB a ogni query.** È sempre coerente con ingestioni concorrenti e altri processi, ma costa O(corpus) per query; per corpus grandi va messo in cache per versione dello store.
 - **Una richiesta di embedding per chunk.** L'API `embed` di Ollama accetta più testi insieme; raggrupparli velocizzerebbe le ingestioni grandi.
-- **Nessuna autenticazione né rate limiting.** Metti l'API dietro un gateway prima di esporla.
+- **Nessuna autenticazione né rate limiting.** Compose espone l'API solo su `127.0.0.1`; per esporla oltre, mettila dietro un gateway con autenticazione.
+- **ChromaDB 1.5.9 può perdere il vettore di un chunk.** Quando si scrive sia nella collection dei chunk sia in `<collection>__system` e poi si legge, negli stress test circa l'1–2% delle ingestioni perde un vettore in modo permanente (sia con il client in memoria sia con quello persistente; la 1.5.9 è l'ultima versione). Il chunk colpito sparisce dalle ricerche vettoriali successive o le fa fallire, e per lo stesso motivo alcuni test unitari falliscono in modo intermittente. Correzione pianificata: tenere puntatori di versione e modello di embedding in una piccola tabella SQLite invece che in una seconda collection Chroma (scrivendo in una sola collection non si è vista nessuna perdita).
 - **I lock di ingestione valgono per singolo processo.** Usa un solo processo API per store, oppure aggiungi un lock condiviso, prima di scalare i worker.
 - **Aggiornamento da uno store precedente al versionamento:** i chunk scritti prima non hanno una versione attiva e non vengono restituiti. Reingerisci quei documenti; i vecchi chunk vengono rimossi durante quell'ingestione.
 - **Chiamate all'LLM sincrone.** Le conversazioni lunghe occupano un thread; streaming e client async sono il passo successivo naturale.

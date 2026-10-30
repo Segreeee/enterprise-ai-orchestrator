@@ -26,6 +26,14 @@ chroma_db/
 mlruns/
 data/
 
+# Logs and local tool output (Archify receipts embed absolute local paths)
+*.log
+.archify/
+docs/data-flow/review-*/
+docs/data-flow/*.browser-check.json
+docs/data-flow/*.delivery.json
+docs/data-flow/*.finalize*.json
+
 # Docker
 .docker/
 docker-compose.override.yml

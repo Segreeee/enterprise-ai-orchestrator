@@ -142,3 +142,12 @@ def test_embedding_stamp_survives_reopen(tmp_path):
 
 def test_persistent_store_disables_chroma_telemetry(tmp_path):
     assert VectorStore.persistent(tmp_path).client.get_settings().anonymized_telemetry is False
+
+
+def test_stale_chunks_closer_to_the_query_do_not_crowd_out_active_ones(store, embedder):
+    add_versioned(store, embedder, "old", "cat cat", "cat cat cat")
+    add_versioned(store, embedder, "new", "dog with a cat")
+
+    results = store.search(embedder.embed("cat"), k=1, versions=["new"])
+
+    assert [r.chunk.text for r in results] == ["dog with a cat"]

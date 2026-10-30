@@ -28,11 +28,14 @@ services:
     build: .
     image: enterprise-ai-orchestrator
     ports:
-      - "8000:8000"
+      # Loopback only: the API has no authentication, so expose it beyond this host through an authenticating gateway.
+      - "127.0.0.1:8000:8000"
     environment:
       OLLAMA_HOST: http://ollama:11434
       CHROMA_PATH: /data/chroma
       MODEL_NAME: ${MODEL_NAME:-llama3.2}
+      # Hides /docs and /openapi.json; set ENV=development to bring them back.
+      ENV: ${ENV:-production}
     volumes:
       - chroma-data:/data/chroma
     depends_on:

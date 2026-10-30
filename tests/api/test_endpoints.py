@@ -30,7 +30,7 @@ def client(retriever, llm) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_retriever] = lambda: retriever
     app.dependency_overrides[get_llm] = lambda: llm
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 def ingest(client: TestClient, doc_id: str, text: str, **extra):
@@ -184,7 +184,7 @@ def test_llm_backend_unreachable_returns_503(retriever):
     app.dependency_overrides[get_retriever] = lambda: retriever
     app.dependency_overrides[get_llm] = DownLLM
 
-    response = TestClient(app).post("/conversations", json={"task": "t", "agents": AGENTS})
+    response = TestClient(app, base_url="http://localhost").post("/conversations", json={"task": "t", "agents": AGENTS})
 
     assert response.status_code == 503
     assert "unavailable" in response.json()["detail"]
@@ -245,7 +245,7 @@ def test_backend_failures_map_to_generic_5xx(retriever, error, status, detail):
     app.dependency_overrides[get_retriever] = lambda: retriever
     app.dependency_overrides[get_llm] = FailingLLM
 
-    response = TestClient(app).post("/conversations", json={"task": "t", "agents": AGENTS})
+    response = TestClient(app, base_url="http://localhost").post("/conversations", json={"task": "t", "agents": AGENTS})
 
     assert response.status_code == status
     assert response.json() == {"detail": detail}
@@ -263,7 +263,7 @@ def test_embedder_timeout_on_query_maps_to_504(store):
     app = create_app()
     app.dependency_overrides[get_retriever] = lambda: Retriever(embedder=SlowEmbedder(), store=store)
 
-    response = TestClient(app).post("/query", json={"query": "cat"})
+    response = TestClient(app, base_url="http://localhost").post("/query", json={"query": "cat"})
 
     assert response.status_code == 504
 
@@ -279,7 +279,7 @@ def test_startup_builds_the_retriever_so_a_store_mismatch_fails_fast():
     app.dependency_overrides[get_retriever] = mismatched
 
     with pytest.raises(EmbeddingMismatchError):
-        with TestClient(app):
+        with TestClient(app, base_url="http://localhost"):
             pass
 
 
@@ -288,6 +288,25 @@ def test_startup_succeeds_with_a_compatible_store(retriever):
     app = create_app()
     app.dependency_overrides[get_retriever] = lambda: built.append(1) or retriever
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         assert client.get("/health").status_code == 200
     assert built == [1]
+
+
+# --- schema hardening -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text", ["   ", "\n\t "])
+def test_ingest_rejects_blank_text_and_keeps_the_existing_document(client, store, text):
+    ingest(client, "pets", "my cat")
+
+    assert ingest(client, "pets", text).status_code == 422
+    assert store.count() == 1
+
+
+@pytest.mark.parametrize("key", ["$and", "chroma:document", "#document"])
+def test_ingest_rejects_chroma_reserved_metadata_keys_before_embedding(client, embedder, store, key):
+    response = ingest(client, "pets", "my cat", metadata={key: "x"})
+
+    assert response.status_code == 422
+    assert embedder.calls == [] and store.count() == 0

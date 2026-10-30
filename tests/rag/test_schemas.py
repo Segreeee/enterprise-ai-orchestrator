@@ -77,3 +77,21 @@ def test_retrieval_score_out_of_range_rejected(score):
 def test_schemas_are_frozen():
     with pytest.raises(ValidationError):
         CHUNK.text = "changed"
+
+
+
+@pytest.mark.parametrize("text", ["", " ", "\n\t  "])
+def test_document_rejects_empty_or_blank_text(text):
+    with pytest.raises(ValidationError):
+        Document(id="d", text=text)
+
+
+@pytest.mark.parametrize("key", ["$and", "$in", "chroma:document", "#document"])
+def test_document_rejects_chroma_reserved_metadata_keys(key):
+    with pytest.raises(ValidationError, match="reserved"):
+        Document(id="d", text="t", metadata={key: "x"})
+
+
+@pytest.mark.parametrize("key", ["source", "a$b", "my:chroma", "page#1"])
+def test_document_accepts_ordinary_metadata_keys(key):
+    assert Document(id="d", text="t", metadata={key: "x"}).metadata == {key: "x"}

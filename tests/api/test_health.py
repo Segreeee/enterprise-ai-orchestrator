@@ -9,7 +9,7 @@ from orchestrator.api.app import configure_logging, create_app
 
 
 def test_health_returns_ok_and_version():
-    response = TestClient(create_app()).get("/health")
+    response = TestClient(create_app(), base_url="http://localhost").get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "version": __version__}
 

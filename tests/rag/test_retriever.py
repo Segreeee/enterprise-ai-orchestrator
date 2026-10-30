@@ -3,7 +3,7 @@ import threading
 import time
 
 import pytest
-from chromadb.errors import ChromaError
+from pydantic import ValidationError
 
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import RRF_K, Retriever, _bm25_ranking
@@ -63,12 +63,16 @@ def test_failed_store_write_keeps_previous_version(retriever, store, monkeypatch
     assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
 
 
-def test_chroma_rejected_metadata_keeps_previous_version(retriever, store):
-    # Real failure from the audit: Chroma refuses "$"-prefixed metadata keys at write time.
+def test_reserved_metadata_key_is_stopped_before_any_write_and_keeps_previous_version(retriever, store, embedder):
+    # Real failure from the audit: Chroma refuses "$"-prefixed keys only at write time, after every
+    # chunk was embedded. Even when Document validation is bypassed, Chunk rejects the key first.
     retriever.ingest(Document(id="pets", text="my cat"))
+    embedder.calls.clear()
 
-    with pytest.raises(ChromaError):
-        retriever.ingest(Document(id="pets", text="a new version", metadata={"$and": "x"}))
+    with pytest.raises(ValidationError, match="reserved"):
+        retriever.ingest(Document.model_construct(id="pets", text="a new version", metadata={"$and": "x"}))
+
+    assert embedder.calls == []
 
     assert store.count() == 1
     assert retriever.retrieve("cat", k=1)[0].chunk.text == "my cat"
@@ -82,7 +86,8 @@ def test_reingest_into_more_chunks_keeps_only_the_new_version(retriever, store):
 
 
 def test_ingest_blank_document_text_is_noop(retriever, store):
-    assert retriever.ingest(Document(id="empty", text="   ")) == 0
+    # The schema rejects blank text; the retriever still handles it if a caller bypasses validation.
+    assert retriever.ingest(Document.model_construct(id="empty", text="   ", metadata={})) == 0
     assert store.count() == 0
 
 

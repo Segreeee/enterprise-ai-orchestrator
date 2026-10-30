@@ -139,9 +139,9 @@ For a richer, interactive version with per-flow explanations, open the
 | **Structured outputs** | `generate(..., response_format=Model)` sends the model's JSON Schema to Ollama (`format=`) and validates the reply against it, because the schema only guides sampling. |
 | **Structured logging** | Loguru writes one JSON object per line to stderr. Each conversation runs inside `logger.contextualize(conversation_id=...)`, so retrieval and LLM logs from that run share the id. Task and reply text are never logged. |
 | **Generic 503/504 on backend failure** | Ollama unreachable or returning an error (e.g. model not pulled) gives **503**, a timeout gives **504**. Responses carry a fixed message; exception text, which can hold hosts or model names, only reaches the logs as an exception type. ChromaDB telemetry is disabled. |
-| **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call), `k ≤ 50`, query ≤ 1,000 characters, task ≤ 4,000, at most 8 agents, agent name ≤ 64, system prompt ≤ 4,000, `stop_token` ≤ 64 — all enforced at the API boundary. |
+| **Hard limits on cost drivers** | `max_turns ≤ 20` (each turn is an LLM call), `k ≤ 50`, query ≤ 1,000 characters, task ≤ 4,000, at most 8 agents, agent name ≤ 64, system prompt ≤ 4,000, `stop_token` ≤ 64 — all enforced at the API boundary. The raw request body is capped at 1 MB by an ASGI middleware **before** parsing (413), so the field caps also bound memory. |
+| **Locked-down surface** | `TrustedHostMiddleware` answers only to the hosts in `ALLOWED_HOSTS` (default `localhost`, `127.0.0.1`, `orchestrator`), which blocks DNS-rebinding pages; `/docs`, `/redoc` and `/openapi.json` are off when `ENV=production`; compose publishes the API on `127.0.0.1` only. |
 | **Lazy dependency singletons** | Importing the app opens no connection and creates no directory, which keeps tests and tooling side-effect free. |
-| **CPU-only PyTorch wheels** | The PyTorch CPU index avoids pulling about 2 GB of CUDA libraries into the image. |
 
 ---
 
@@ -201,7 +201,7 @@ make run
 python -m uvicorn orchestrator.api.app:app --app-dir src --reload
 ```
 
-The interactive OpenAPI docs are available at <http://localhost:8000/docs>.
+The interactive OpenAPI docs are available at <http://localhost:8000/docs> (development only: they are disabled when `ENV=production`, the compose default).
 
 > **Windows note:** `make` is not installed by default (`choco install make`). Every target in the
 > `Makefile` is a single command you can also run by hand.
@@ -241,7 +241,7 @@ make docker-down    # docker compose down
 |---|---|---|
 | `ollama` | `ollama/ollama` | Model server, health-checked with `ollama list`; models persisted in the `ollama-models` volume |
 | `ollama-init` | `ollama/ollama` | One-shot job: pulls `${MODEL_NAME:-llama3.2}` and `nomic-embed-text`, then exits |
-| `orchestrator` | built from `Dockerfile` | The API on port **8000**; starts only after `ollama-init` succeeds; ChromaDB persisted in the `chroma-data` volume at `/data/chroma` |
+| `orchestrator` | built from `Dockerfile` | The API on `127.0.0.1:8000` (loopback only), with `ENV=production`; starts only after `ollama-init` succeeds; ChromaDB persisted in the `chroma-data` volume at `/data/chroma` |
 
 The first start downloads the models (about 2.3 GB) into the volume. Later starts reuse them.
 To use an NVIDIA GPU, uncomment the `deploy` block of the `ollama` service (requires `nvidia-container-toolkit`).
@@ -250,7 +250,7 @@ To use an NVIDIA GPU, uncomment the `deploy` block of the `ollama` service (requ
 
 ```bash
 make docker-build   # docker build -t enterprise-ai-orchestrator .
-make docker-run     # docker run --rm -p 8000:8000 enterprise-ai-orchestrator
+make docker-run     # docker run --rm -p 127.0.0.1:8000:8000 enterprise-ai-orchestrator
 ```
 
 The image is built in two stages:
@@ -288,7 +288,7 @@ curl -X POST http://localhost:8000/ingest \
 {"document_id": "caching-guide", "chunks": 1}
 ```
 
-Re-ingesting the same `id` publishes a new version that replaces the previous one atomically for readers; identical content is a no-op. `metadata` values must be scalars (string, number or boolean). Limits: `text` ≤ 50,000 characters, `id` ≤ 256, at most 16 metadata entries, keys ≤ 64 and string values ≤ 256 characters; larger payloads return 422.
+Re-ingesting the same `id` publishes a new version that replaces the previous one atomically for readers; identical content is a no-op. `text` must contain non-whitespace characters. `metadata` values must be scalars (string, number or boolean), and keys starting with `$`, `#` or `chroma:` are reserved by ChromaDB and rejected. Limits: `text` ≤ 50,000 characters, `id` ≤ 256, at most 16 metadata entries, keys ≤ 64 and string values ≤ 256 characters; larger payloads return 422.
 
 ### `POST /query`
 
@@ -381,6 +381,8 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | Status | When |
 |---|---|
 | `201` | Document ingested |
+| `400` | `Host` header not in `ALLOWED_HOSTS` |
+| `413` | Request body larger than 1 MB |
 | `422` | Validation failure: blank or oversized query or task, too many agents, `k`/`max_turns` out of range, duplicate agent names, unknown fields, non-scalar metadata |
 | `503` | Ollama unreachable (`{"detail": "model backend unavailable"}`) or returning an error such as a missing model (`"model backend error"`), safe to retry |
 | `504` | Ollama timed out (`{"detail": "model backend timed out"}`), safe to retry |
@@ -394,6 +396,8 @@ with httpx.Client(base_url="http://localhost:8000", timeout=120) as api:
 | `OLLAMA_HOST` | `http://localhost:11434` | LLM and embedding clients (must be a valid `http(s)` URL) |
 | `CHROMA_PATH` | `chroma_db` | Persistent ChromaDB directory |
 | `MODEL_NAME` | `llama3.2` | Chat model used by agents |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,orchestrator` | Comma-separated `Host` values the API answers to |
+| `ENV` | `development` | `production` disables `/docs`, `/redoc` and `/openapi.json` (compose sets it) |
 
 The embedding model is `nomic-embed-text` (768 dimensions), the default of `OllamaEmbedder`.
 
@@ -403,10 +407,10 @@ The embedding model is `nomic-embed-text` (768 dimensions), the default of `Olla
 
 These limits are listed on purpose; they are the next iterations, not hidden debt.
 
-- **PyTorch is installed but not used yet.** Embeddings come from Ollama. It is there for a planned local embedder or fine-tuning step, and it accounts for most of the 2 GB image. Remove it from `requirements.txt` if you do not need it.
 - **The BM25 index is rebuilt from ChromaDB on every query.** It is always consistent with concurrent ingests and other processes, but costs O(corpus) per query; cache it per store version for large corpora.
 - **One embedding request per chunk.** The Ollama `embed` API accepts batches; batching would speed up large ingests.
-- **No authentication or rate limiting.** Put the API behind a gateway before exposing it.
+- **No authentication or rate limiting.** Compose binds the API to `127.0.0.1`; put an authenticating gateway in front before exposing it further.
+- **ChromaDB 1.5.9 can drop a chunk's vector.** When writes go to both the chunk collection and the `<collection>__system` collection and a read follows, about 1–2% of ingests permanently lose a vector in our stress tests (in-memory and persistent clients alike; 1.5.9 is the latest release). The affected chunk then disappears from, or makes fail, later vector searches, and a few unit tests fail intermittently for the same reason. Planned fix: keep version pointers and the embedding stamp in a small SQLite table instead of a second Chroma collection (writes to a single collection showed no loss).
 - **Ingestion locks are per process.** Run one API process per store, or add a shared lock, before scaling out workers.
 - **Upgrading from a pre-versioning store:** chunks written before versioned ingestion have no active version and are not returned. Re-ingest those documents; the old chunks are removed on that ingest.
 - **Synchronous LLM calls.** Long conversations hold a worker thread; streaming and async clients are a natural next step.

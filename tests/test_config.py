@@ -41,3 +41,25 @@ def test_settings_are_immutable_and_strict():
     settings = Settings()
     with pytest.raises(ValidationError):
         settings.model_name = "other"
+
+
+
+def test_defaults_allow_local_and_compose_hosts_in_development():
+    settings = Settings()
+    assert settings.allowed_hosts == ["localhost", "127.0.0.1", "orchestrator"]
+    assert settings.environment == "development"
+
+
+def test_allowed_hosts_and_environment_from_env(monkeypatch):
+    monkeypatch.setenv("ALLOWED_HOSTS", "api.example, localhost ,")
+    monkeypatch.setenv("ENV", "production")
+    settings = Settings.from_env()
+    assert settings.allowed_hosts == ["api.example", "localhost"]
+    assert settings.environment == "production"
+
+
+@pytest.mark.parametrize(("var", "value"), [("ENV", "staging"), ("ALLOWED_HOSTS", " , ")])
+def test_invalid_environment_or_empty_allowlist_rejected(monkeypatch, var, value):
+    monkeypatch.setenv(var, value)
+    with pytest.raises(ValidationError):
+        Settings.from_env()

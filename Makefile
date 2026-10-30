@@ -22,7 +22,7 @@ docker-build:
 	docker build -t $(IMAGE) .
 
 docker-run:
-	docker run --rm -p 8000:8000 $(IMAGE)
+	docker run --rm -p 127.0.0.1:8000:8000 $(IMAGE)
 
 docker-up:
 	docker compose up -d --build

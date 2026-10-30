@@ -63,8 +63,7 @@ class Orchestrator:
         if self._retriever is None:
             return ""
         results = self._retriever.retrieve(query, k=self._k)
-        # A chunk must not be able to close the block and speak outside it.
-        return "\n".join(f"[{i}] {_DOCUMENTS_TAG.sub('', r.chunk.text)}" for i, r in enumerate(results, start=1))
+        return "\n".join(f"[{i}] {_strip_documents_tags(r.chunk.text)}" for i, r in enumerate(results, start=1))
 
     @staticmethod
     def _prompt(agent: AgentSpec, task: str, turns: list[Turn], context: str) -> list[Message]:
@@ -82,3 +81,11 @@ class Orchestrator:
             else:
                 messages.append(Message(role="user", content=f"[{turn.agent}] {turn.message.content}"))
         return messages
+
+
+def _strip_documents_tags(text: str) -> str:
+    """Remove <documents> tags until none is left, so a chunk cannot close the block and speak outside it."""
+    # One pass is not enough: removing the inner tag of '</docu</documents>ments>' reassembles an outer one.
+    while (stripped := _DOCUMENTS_TAG.sub("", text)) != text:
+        text = stripped
+    return text
