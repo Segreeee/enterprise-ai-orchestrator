@@ -5250,11 +5250,11 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <path data-edge-from="api" data-edge-to="orchestrator" data-edge-label="task + agents" data-edge-key="2" data-edge-id="task" data-composition-points="371,394;422.5,394;422.5,613;474,613" d="M 371 394 L 422.5 394 L 422.5 613 L 474 613" class="a-emphasis" data-animate="edge" style="--step:2" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="retriever" data-edge-to="embed" data-edge-label="text to embed" data-edge-key="3" data-edge-id="embed-text" data-composition-points="586,235;637.5,235;637.5,148;689,148" d="M 586 235 L 637.5 235 L 637.5 148 L 689 148" class="a-default" data-animate="edge" style="--step:3" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="embed" data-edge-to="retriever" data-edge-label="Embedding" data-edge-key="4" data-edge-id="vectors" data-composition-points="689,166;637.5,166;637.5,247;586,247" d="M 689 166 L 637.5 166 L 637.5 247 L 586 247" class="a-default" data-animate="edge" style="--step:4" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="retriever" data-edge-to="chunks" data-edge-label="versioned upsert" data-edge-key="5" data-edge-id="write-version" data-composition-points="586,295;745,295;745,385;904,385" d="M 586 295 L 745 295 L 745 385 L 904 385" class="a-emphasis" data-animate="edge" style="--step:5" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="retriever" data-edge-to="system" data-edge-label="flip pointer" data-edge-key="6" data-edge-id="flip-pointer" data-composition-points="586,271;610,271;610,296;880,296;880,280;904,280" d="M 586 271 L 610 271 L 610 296 L 880 296 L 880 280 L 904 280" class="a-emphasis" data-animate="edge" style="--step:6" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="chunks" data-edge-to="retriever" data-edge-label="vector hits" data-edge-key="7" data-edge-id="vector-hits" data-composition-points="904,370;745,370;745,283;586,283" d="M 904 370 L 745 370 L 745 283 L 586 283" class="a-default" data-animate="edge" style="--step:7" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="system" data-edge-to="retriever" data-edge-label="active versions" data-edge-key="8" data-edge-id="active-versions" data-composition-points="904,262;880,262;880,278;610,278;610,259;586,259" d="M 904 262 L 880 262 L 880 278 L 610 278 L 610 259 L 586 259" class="a-default" data-animate="edge" style="--step:8" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="chunks" data-edge-to="bm25" data-edge-label="active chunks" data-edge-key="9" data-edge-id="active-chunks" data-composition-points="904,400;852.5,400;852.5,499;801,499" d="M 904 400 L 852.5 400 L 852.5 499 L 801 499" class="a-default" data-animate="edge" style="--step:9" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="retriever" data-edge-to="chunks" data-edge-label="versioned upsert" data-edge-key="5" data-edge-id="write-version" data-composition-points="586,295;734.25,295;734.25,385;882.5,385" d="M 586 295 L 734.25 295 L 734.25 385 L 882.5 385" class="a-emphasis" data-animate="edge" style="--step:5" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="retriever" data-edge-to="metadata" data-edge-label="flip pointer (txn)" data-edge-key="6" data-edge-id="flip-pointer" data-composition-points="586,271;610,271;610,296;862.5,296;862.5,280;886.5,280" d="M 586 271 L 610 271 L 610 296 L 862.5 296 L 862.5 280 L 886.5 280" class="a-emphasis" data-animate="edge" style="--step:6" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="chunks" data-edge-to="retriever" data-edge-label="vector hits" data-edge-key="7" data-edge-id="vector-hits" data-composition-points="882.5,370;734.25,370;734.25,283;586,283" d="M 882.5 370 L 734.25 370 L 734.25 283 L 586 283" class="a-default" data-animate="edge" style="--step:7" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="metadata" data-edge-to="retriever" data-edge-label="active versions" data-edge-key="8" data-edge-id="active-versions" data-composition-points="886.5,262;862.5,262;862.5,278;610,278;610,259;586,259" d="M 886.5 262 L 862.5 262 L 862.5 278 L 610 278 L 610 259 L 586 259" class="a-default" data-animate="edge" style="--step:8" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="chunks" data-edge-to="bm25" data-edge-label="active chunks" data-edge-key="9" data-edge-id="active-chunks" data-composition-points="882.5,400;841.75,400;841.75,499;801,499" d="M 882.5 400 L 841.75 400 L 841.75 499 L 801 499" class="a-default" data-animate="edge" style="--step:9" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="bm25" data-edge-to="retriever" data-edge-label="BM25 ranking" data-edge-key="10" data-edge-id="lexical-hits" data-composition-points="689,499;637.5,499;637.5,307;586,307" d="M 689 499 L 637.5 499 L 637.5 307 L 586 307" class="a-default" data-animate="edge" style="--step:10" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="retriever" data-edge-to="orchestrator" data-edge-label="RRF top-k" data-edge-key="11" data-edge-id="rag-context" data-composition-points="530,323;530,584" d="M 530 323 L 530 584" class="a-default" data-animate="edge" style="--step:11" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="orchestrator" data-edge-to="chat" data-edge-label="Message[]" data-edge-key="12" data-edge-id="prompt" data-composition-points="586,604;904,604" d="M 586 604 L 904 604" class="a-emphasis" data-animate="edge" style="--step:12" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
@@ -5312,30 +5312,30 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="fine" x="530" y="631" class="t-backend" font-size="7" text-anchor="middle">conversation_id</text>
         </g>
 
-        <g id="node-chunks" data-node-id="chunks" data-node-label="Chunk collection" tabindex="0" role="button" aria-label="Focus Chunk collection, all versions · cosine, 05 / Stores &amp; chat model" aria-pressed="false" data-node-kind="database" data-node-sublabel="all versions · cosine" data-node-tag="ChromaDB" data-node-context="05 / Stores &amp; chat model">
-          <title>Chunk collection · all versions · cosine · 05 / Stores &amp; chat model · ChromaDB</title>
-          <rect x="904" y="354" width="112" height="62" rx="6" class="c-mask"/>
-          <rect x="904" y="354" width="112" height="62" rx="6" class="c-database" data-animate="node" style="--step:6" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(910 360) scale(0.6875)">
+        <g id="node-chunks" data-node-id="chunks" data-node-label="Vector store" tabindex="0" role="button" aria-label="Focus Vector store, chunks only · all versions · cosine, 05 / Stores &amp; chat model" aria-pressed="false" data-node-kind="database" data-node-sublabel="chunks only · all versions · cosine" data-node-tag="ChromaDB" data-node-context="05 / Stores &amp; chat model">
+          <title>Vector store · chunks only · all versions · cosine · 05 / Stores &amp; chat model · ChromaDB</title>
+          <rect x="882.5" y="354" width="155" height="62" rx="6" class="c-mask"/>
+          <rect x="882.5" y="354" width="155" height="62" rx="6" class="c-database" data-animate="node" style="--step:6" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(888.5 360) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="960" y="385" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Chunk collection</text>
-          <text data-detail="context" x="960" y="398.4" class="t-muted" font-size="7" text-anchor="middle">all versions · cosine</text>
-        <text data-detail="fine" x="960" y="410.9" class="t-database" font-size="7" text-anchor="middle">ChromaDB</text>
+          <text data-node-label="" data-detail-anchor="" x="960" y="377" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Vector store</text>
+          <text data-detail="context" x="960" y="393" class="t-muted" font-size="7" text-anchor="middle">chunks only · all versions · cosine</text>
+        <text data-detail="fine" x="960" y="403" class="t-database" font-size="7" text-anchor="middle">ChromaDB</text>
         </g>
 
-        <g id="node-system" data-node-id="system" data-node-label="System collection" tabindex="0" role="button" aria-label="Focus System collection, active version · model, 05 / Stores &amp; chat model" aria-pressed="false" data-node-kind="database" data-node-sublabel="active version · model" data-node-tag="ChromaDB" data-node-context="05 / Stores &amp; chat model">
-          <title>System collection · active version · model · 05 / Stores &amp; chat model · ChromaDB</title>
-          <rect x="904" y="242" width="112" height="58" rx="6" class="c-mask"/>
-          <rect x="904" y="242" width="112" height="58" rx="6" class="c-database" data-animate="node" style="--step:7" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(910 243) scale(0.375)">
+        <g id="node-metadata" data-node-id="metadata" data-node-label="system.db" tabindex="0" role="button" aria-label="Focus system.db, metadata_db.py · versions · model, 05 / Stores &amp; chat model" aria-pressed="false" data-node-kind="database" data-node-sublabel="metadata_db.py · versions · model" data-node-tag="SQLite" data-node-context="05 / Stores &amp; chat model">
+          <title>system.db · metadata_db.py · versions · model · 05 / Stores &amp; chat model · SQLite</title>
+          <rect x="886.5" y="242" width="147" height="58" rx="6" class="c-mask"/>
+          <rect x="886.5" y="242" width="147" height="58" rx="6" class="c-database" data-animate="node" style="--step:7" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(892.5 248) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="960" y="263" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">System collection</text>
-          <text data-detail="context" x="960" y="279" class="t-muted" font-size="7" text-anchor="middle">active version · model</text>
-        <text data-detail="fine" x="960" y="289" class="t-database" font-size="7" text-anchor="middle">ChromaDB</text>
+          <text data-node-label="" data-detail-anchor="" x="960" y="263" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">system.db</text>
+          <text data-detail="context" x="960" y="279" class="t-muted" font-size="7" text-anchor="middle">metadata_db.py · versions · model</text>
+        <text data-detail="fine" x="960" y="289" class="t-database" font-size="7" text-anchor="middle">SQLite</text>
         </g>
 
         <g id="node-bm25" data-node-id="bm25" data-node-label="BM25 index" tabindex="0" role="button" aria-label="Focus BM25 index, rebuilt per query, 04 / Embedding &amp; BM25" aria-pressed="false" data-node-kind="backend" data-node-sublabel="rebuilt per query" data-node-tag="in-memory" data-node-context="04 / Embedding &amp; BM25">
@@ -5398,24 +5398,24 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <text x="603.45" y="210.5" class="t-edge-default" font-size="8" text-anchor="middle">Embedding</text>
         </g>
         <g data-detail="context" data-edge-from="retriever" data-edge-to="chunks" data-edge-label="versioned upsert" data-edge-key="5" data-edge-id="write-version">
-          <rect x="648.5999999999999" y="333" width="90.4" height="16" rx="4" class="c-mask"/>
-          <text x="693.8" y="344" class="t-edge-emphasis" font-size="8" text-anchor="middle">versioned upsert</text>
+          <rect x="740.25" y="333" width="90.4" height="16" rx="4" class="c-mask"/>
+          <text x="785.45" y="344" class="t-edge-emphasis" font-size="8" text-anchor="middle">versioned upsert</text>
         </g>
-        <g data-detail="context" data-edge-from="retriever" data-edge-to="system" data-edge-label="flip pointer" data-edge-key="6" data-edge-id="flip-pointer">
-          <rect x="810.85" y="306" width="70.8" height="16" rx="4" class="c-mask"/>
-          <text x="846.25" y="317" class="t-edge-emphasis" font-size="8" text-anchor="middle">flip pointer</text>
+        <g data-detail="context" data-edge-from="retriever" data-edge-to="metadata" data-edge-label="flip pointer (txn)" data-edge-key="6" data-edge-id="flip-pointer">
+          <rect x="780.8375" y="306" width="100.2" height="16" rx="4" class="c-mask"/>
+          <text x="830.9375" y="317" class="t-edge-emphasis" font-size="8" text-anchor="middle">flip pointer (txn)</text>
         </g>
         <g data-detail="context" data-edge-from="chunks" data-edge-to="retriever" data-edge-label="vector hits" data-edge-key="7" data-edge-id="vector-hits">
-          <rect x="791.55" y="350" width="65.9" height="16" rx="4" class="c-mask"/>
-          <text x="824.5" y="361" class="t-edge-default" font-size="8" text-anchor="middle">vector hits</text>
+          <rect x="662.3499999999999" y="319.5" width="65.9" height="16" rx="4" class="c-mask"/>
+          <text x="695.3" y="330.5" class="t-edge-default" font-size="8" text-anchor="middle">vector hits</text>
         </g>
-        <g data-detail="context" data-edge-from="system" data-edge-to="retriever" data-edge-label="active versions" data-edge-key="8" data-edge-id="active-versions">
-          <rect x="702.25" y="258" width="85.5" height="16" rx="4" class="c-mask"/>
-          <text x="745" y="269" class="t-edge-default" font-size="8" text-anchor="middle">active versions</text>
+        <g data-detail="context" data-edge-from="metadata" data-edge-to="retriever" data-edge-label="active versions" data-edge-key="8" data-edge-id="active-versions">
+          <rect x="693.5" y="258" width="85.5" height="16" rx="4" class="c-mask"/>
+          <text x="736.25" y="269" class="t-edge-default" font-size="8" text-anchor="middle">active versions</text>
         </g>
         <g data-detail="context" data-edge-from="chunks" data-edge-to="bm25" data-edge-label="active chunks" data-edge-key="9" data-edge-id="active-chunks">
-          <rect x="814.65" y="428.5" width="75.7" height="16" rx="4" class="c-mask"/>
-          <text x="852.5" y="439.5" class="t-edge-default" font-size="8" text-anchor="middle">active chunks</text>
+          <rect x="803.9" y="428.5" width="75.7" height="16" rx="4" class="c-mask"/>
+          <text x="841.75" y="439.5" class="t-edge-default" font-size="8" text-anchor="middle">active chunks</text>
         </g>
         <g data-detail="context" data-edge-from="bm25" data-edge-to="retriever" data-edge-label="BM25 ranking" data-edge-key="10" data-edge-id="lexical-hits">
           <rect x="602.1" y="382" width="70.8" height="16" rx="4" class="c-mask"/>
@@ -5634,7 +5634,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>Version = hash of text, metadata, chunking and embedding model; chunk ids are {doc}:{version}:{i}</li>
-          <li>Under a per-document lock: embed all chunks, upsert them, then one upsert flips the pointer in the system collection</li>
+          <li>Under a per-document lock: embed all chunks, upsert them into Chroma, then flip the pointer with one SQLite transaction (INSERT OR REPLACE into document_versions)</li>
           <li>Older chunks are deleted after the flip; a failure before it keeps the previous version active</li>
           <li>Re-ingesting identical content is a no-op</li>
         </ul>
@@ -5649,6 +5649,18 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <li>One snapshot of active versions filters both searches, so readers never see a mix of versions</li>
           <li>Vector ranking from Chroma (cosine) and BM25 ranking over active chunks, each top 4·k</li>
           <li>Fused with Reciprocal Rank Fusion: score = Σ 1 / (60 + rank)</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot orange"></div>
+          <h3>State split</h3>
+        </div>
+        <ul>
+          <li>ChromaDB holds only the chunk collection: text, vectors and _version metadata</li>
+          <li>SQLite system.db (stdlib sqlite3, beside Chroma&#39;s files in CHROMA_PATH) holds the active-version pointers and the embedding-model stamp</li>
+          <li>Keeping pointers out of a second Chroma collection removed chromadb 1.5.9&#39;s vector loss: 0 of 2,000 stress sequences lost data</li>
         </ul>
       </div>
 
@@ -5673,8 +5685,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>Strict Pydantic models with size caps: document 50k chars, query 1k, task 4k, ≤ 8 agents, system prompt 4k, stop_token 64</li>
+          <li>Raw body over 1 MB → 413 before parsing; Host header must be in ALLOWED_HOSTS; docs off when ENV=production</li>
           <li>Ollama unreachable or erroring → 503, timeout → 504, with fixed messages and no exception text</li>
-          <li>At startup the store&#39;s recorded embedding model and dimension must match the embedder</li>
+          <li>At startup the embedding model and dimension recorded in system.db must match the embedder</li>
           <li>Chroma anonymized telemetry is disabled on the persistent client</li>
         </ul>
       </div>

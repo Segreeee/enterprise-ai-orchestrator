@@ -1,6 +1,8 @@
+import re
+
 import pytest
 
-from orchestrator.agents.orchestrator import _DOCUMENTS_TAG, CONTEXT_GUARD, Orchestrator
+from orchestrator.agents.orchestrator import CONTEXT_GUARD, Orchestrator
 from orchestrator.agents.schemas import AgentSpec, Conversation, Message
 from orchestrator.rag.chunker import Chunker
 from orchestrator.rag.retriever import Retriever
@@ -83,8 +85,10 @@ def test_retrieved_text_cannot_open_or_close_the_documents_block(payload):
 
     context = llm.calls[0][1].content
     assert context.startswith("<documents>\n") and context.endswith("\n</documents>")
-    # Any spelling the code's own regex treats as a tag (case, inner whitespace) must be gone.
-    assert _DOCUMENTS_TAG.findall(context.removeprefix("<documents>\n").removesuffix("\n</documents>")) == []
+    # Any spelling a model would read as the tag (any case, inner whitespace) must be gone. The pattern is
+    # written out here, not imported, so a weakened production regex cannot also blind this check.
+    tag = re.compile(r"<\s*/?\s*documents\s*>", re.IGNORECASE)
+    assert tag.findall(context.removeprefix("<documents>\n").removesuffix("\n</documents>")) == []
 
 
 def test_retriever_queried_with_task_then_latest_reply():

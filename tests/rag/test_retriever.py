@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.rag.chunker import Chunker
+from orchestrator.rag.metadata_db import MetadataDB
 from orchestrator.rag.retriever import RRF_K, Retriever, _bm25_ranking
 from orchestrator.rag.schemas import Chunk, Document, RetrievalResult
 from orchestrator.rag.store import EmbeddingMismatchError
@@ -304,3 +305,24 @@ def test_retriever_refuses_a_store_built_with_another_embedding_model(embedder, 
     store.check_embedding("nomic-embed-text", 768)
     with pytest.raises(EmbeddingMismatchError):
         Retriever(embedder=embedder, store=store)
+
+
+
+def test_ingest_then_search_never_loses_vectors():
+    # Regression: with pointers in a second Chroma collection, about 1-2% of these sequences lost
+    # a chunk's vector for good (chromadb 1.5.9), so 150 fresh stores failed almost every run.
+    import sqlite3
+    from uuid import uuid4
+
+    import chromadb
+
+    from orchestrator.rag.store import VectorStore
+    from tests.fakes import KeywordEmbedder
+
+    for _ in range(150):
+        db = MetadataDB(sqlite3.connect(":memory:", check_same_thread=False))
+        store = VectorStore(chromadb.EphemeralClient(), collection=f"s-{uuid4().hex}", metadata=db)
+        retriever = Retriever(KeywordEmbedder(), store, Chunker(chunk_size=20, chunk_overlap=0))
+        for doc_id, text in {"x": "cats", "y": "zebra", "z": "dog park"}.items():
+            retriever.ingest(Document(id=doc_id, text=text))
+        assert len(store.search(KeywordEmbedder().embed("cat"), k=12, versions=list(store.active_versions().values()))) == 3

@@ -151,3 +151,31 @@ def test_stale_chunks_closer_to_the_query_do_not_crowd_out_active_ones(store, em
     results = store.search(embedder.embed("cat"), k=1, versions=["new"])
 
     assert [r.chunk.text for r in results] == ["dog with a cat"]
+
+
+
+def test_chroma_holds_only_the_chunk_collection(store, embedder):
+    # Writing to a second Chroma collection and then reading made chromadb 1.5.9 drop vectors,
+    # so pointers and the embedding stamp live in SQLite and Chroma keeps chunks only.
+    store.check_embedding("keyword-test", 3)
+    add_versioned(store, embedder, "v1", "cat")
+    store.activate("d1", "v1", chunks=1)
+
+    names = [c.name for c in store.client.list_collections()]
+    assert store.collection_name in names
+    assert not any(name.endswith("__system") for name in names)
+
+
+def test_pointers_and_stamp_live_in_the_metadata_db(store, metadata_db):
+    store.check_embedding("nomic-embed-text", 768)
+    store.activate("d1", "v1", chunks=2)
+
+    assert metadata_db.embedding_model() == ("nomic-embed-text", 768)
+    assert metadata_db.active_version("d1") == ("v1", 2)
+
+
+def test_persistent_store_keeps_its_metadata_db_next_to_chroma(tmp_path):
+    VectorStore.persistent(tmp_path).activate("d1", "v1", chunks=2)
+
+    assert (tmp_path / "system.db").is_file()
+    assert VectorStore.persistent(tmp_path).active_version("d1") == ("v1", 2)

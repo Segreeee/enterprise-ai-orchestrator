@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from pathlib import Path
-from typing import NamedTuple, Self
+from typing import Self
 
 import chromadb
 from chromadb.api import ClientAPI
@@ -11,54 +11,51 @@ from loguru import logger
 from pydantic import PositiveInt, validate_call
 
 from orchestrator.models.embeddings import Embedding
+from orchestrator.rag.metadata_db import ActiveVersion, MetadataDB
 from orchestrator.rag.schemas import Chunk, RetrievalResult
+
+__all__ = ["ActiveVersion", "EmbeddingMismatchError", "VectorStore"]
 
 # Chunk fields stored alongside user metadata so a Chunk can be rebuilt from a query hit.
 _DOC_ID, _INDEX, _VERSION = "_document_id", "_index", "_version"
 _INTERNAL = (_DOC_ID, _INDEX, _VERSION)
-# Records of the system collection; it needs a vector per record, so each gets this placeholder.
-_EMBEDDING_ID, _POINTER = "embedding", "document"
-_PLACEHOLDER: PyEmbeddings = [[1.0]]
+# The SQLite file holding pointers and the embedding stamp, beside Chroma's files on the same volume.
+METADATA_DB_NAME = "system.db"
 
 
 class EmbeddingMismatchError(RuntimeError):
     """The store holds vectors from a different embedding model or dimension."""
 
 
-class ActiveVersion(NamedTuple):
-    version: str
-    chunks: int
-
-
 class VectorStore:
-    """ChromaDB collection holding chunks; pass EphemeralClient for tests, or use `persistent()`.
+    """Chunks in one ChromaDB collection; versions and the embedding stamp in a MetadataDB.
 
-    Chunks of every version are stored side by side. A companion "system" collection holds one
-    pointer record per document naming its active version, plus the embedding model the vectors
-    came from. Chroma has no multi-record transactions, but a single upsert is atomic, so
-    switching a pointer is how a new version becomes visible all at once.
+    Chunks of every version are stored side by side. Each document has one pointer naming its
+    active version, flipped in a single SQLite transaction, so a new version becomes visible all at
+    once. Pass EphemeralClient plus an in-memory MetadataDB for tests, or use `persistent()`.
     """
 
-    def __init__(self, client: ClientAPI, collection: str = "documents") -> None:
+    def __init__(self, client: ClientAPI, collection: str = "documents", *, metadata: MetadataDB) -> None:
         self.client = client
+        self.collection_name = collection
         self._collection = client.get_or_create_collection(
             collection, metadata={"hnsw:space": "cosine"}, embedding_function=None
         )
-        self._system = client.get_or_create_collection(f"{collection}__system", embedding_function=None)
+        self._metadata = metadata
 
     @classmethod
     def persistent(cls, path: str | Path, collection: str = "documents") -> Self:
         settings = Settings(anonymized_telemetry=False)
-        return cls(chromadb.PersistentClient(path=str(path), settings=settings), collection)
+        client = chromadb.PersistentClient(path=str(path), settings=settings)
+        return cls(client, collection, metadata=MetadataDB.open(Path(path) / METADATA_DB_NAME))
 
     def count(self) -> int:
         return self._collection.count()
 
     def check_embedding(self, model: str, dimension: int) -> None:
         """Record the embedding model on first use; afterwards refuse any other model or dimension."""
-        stored = self._system.get(ids=[_EMBEDDING_ID], include=["metadatas"])["metadatas"]
-        if stored:
-            found = (stored[0].get("model"), stored[0].get("dimension"))
+        found = self._metadata.embedding_model()
+        if found is not None:
             if found != (model, dimension):
                 raise EmbeddingMismatchError(
                     f"store holds {found[0]}/{found[1]} vectors, configured embedder is {model}/{dimension}"
@@ -66,27 +63,17 @@ class VectorStore:
             return
         if self.count():
             logger.warning("existing store has no embedding record; assuming it matches", model=model)
-        self._system.upsert(
-            ids=[_EMBEDDING_ID], embeddings=_PLACEHOLDER, metadatas=[{"model": model, "dimension": dimension}]
-        )
+        self._metadata.record_embedding_model(model, dimension)
 
     def active_version(self, document_id: str) -> ActiveVersion | None:
-        res = self._system.get(ids=[_pointer_id(document_id)], include=["metadatas"])["metadatas"]
-        if not res:
-            return None
-        return ActiveVersion(str(res[0]["version"]), int(res[0]["chunks"]))  # type: ignore[arg-type]
+        return self._metadata.active_version(document_id)
 
     def active_versions(self) -> dict[str, str]:
-        """Active version of every document, read in one call so a reader sees one consistent snapshot."""
-        res = self._system.get(where={"kind": _POINTER}, include=["metadatas"])["metadatas"] or []
-        return {str(m["document_id"]): str(m["version"]) for m in res}
+        """Active version of every document, read in one query so a reader sees one consistent snapshot."""
+        return self._metadata.active_versions()
 
     def activate(self, document_id: str, version: str, chunks: int) -> None:
-        self._system.upsert(
-            ids=[_pointer_id(document_id)],
-            embeddings=_PLACEHOLDER,
-            metadatas=[{"kind": _POINTER, "document_id": document_id, "version": version, "chunks": chunks}],
-        )
+        self._metadata.activate(document_id, version, chunks)
 
     def delete_stale(self, document_id: str, keep_version: str) -> None:
         """Drop every chunk of the document outside keep_version, including unversioned legacy chunks."""
@@ -146,10 +133,6 @@ class VectorStore:
             score = min(max(1.0 - distance / 2.0, 0.0), 1.0)
             results.append(RetrievalResult(chunk=_chunk(chunk_id, text, meta), score=score))
         return results
-
-
-def _pointer_id(document_id: str) -> str:
-    return f"{_POINTER}:{document_id}"
 
 
 def _in_versions(versions: Sequence[str] | None) -> Where | None:

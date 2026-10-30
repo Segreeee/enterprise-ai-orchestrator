@@ -64,20 +64,20 @@
     {
       "id": "chunks",
       "type": "database",
-      "label": "Chunk collection",
-      "sublabel": "all versions · cosine",
+      "label": "Vector store",
+      "sublabel": "chunks only · all versions · cosine",
       "stage": 4,
       "row": 2,
       "tag": "ChromaDB"
     },
     {
-      "id": "system",
+      "id": "metadata",
       "type": "database",
-      "label": "System collection",
-      "sublabel": "active version · model",
+      "label": "system.db",
+      "sublabel": "metadata_db.py · versions · model",
       "stage": 4,
       "row": 1,
-      "tag": "ChromaDB"
+      "tag": "SQLite"
     },
     {
       "id": "bm25",
@@ -151,8 +151,8 @@
     {
       "id": "flip-pointer",
       "from": "retriever",
-      "to": "system",
-      "label": "flip pointer",
+      "to": "metadata",
+      "label": "flip pointer (txn)",
       "variant": "emphasis"
     },
     {
@@ -163,7 +163,7 @@
     },
     {
       "id": "active-versions",
-      "from": "system",
+      "from": "metadata",
       "to": "retriever",
       "label": "active versions"
     },
@@ -205,7 +205,7 @@
       "title": "POST /ingest — versioned",
       "items": [
         "Version = hash of text, metadata, chunking and embedding model; chunk ids are {doc}:{version}:{i}",
-        "Under a per-document lock: embed all chunks, upsert them, then one upsert flips the pointer in the system collection",
+        "Under a per-document lock: embed all chunks, upsert them into Chroma, then flip the pointer with one SQLite transaction (INSERT OR REPLACE into document_versions)",
         "Older chunks are deleted after the flip; a failure before it keeps the previous version active",
         "Re-ingesting identical content is a no-op"
       ]
@@ -217,6 +217,15 @@
         "One snapshot of active versions filters both searches, so readers never see a mix of versions",
         "Vector ranking from Chroma (cosine) and BM25 ranking over active chunks, each top 4·k",
         "Fused with Reciprocal Rank Fusion: score = Σ 1 / (60 + rank)"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "State split",
+      "items": [
+        "ChromaDB holds only the chunk collection: text, vectors and _version metadata",
+        "SQLite system.db (stdlib sqlite3, beside Chroma's files in CHROMA_PATH) holds the active-version pointers and the embedding-model stamp",
+        "Keeping pointers out of a second Chroma collection removed chromadb 1.5.9's vector loss: 0 of 2,000 stress sequences lost data"
       ]
     },
     {
@@ -235,8 +244,9 @@
       "title": "Guardrails",
       "items": [
         "Strict Pydantic models with size caps: document 50k chars, query 1k, task 4k, ≤ 8 agents, system prompt 4k, stop_token 64",
+        "Raw body over 1 MB → 413 before parsing; Host header must be in ALLOWED_HOSTS; docs off when ENV=production",
         "Ollama unreachable or erroring → 503, timeout → 504, with fixed messages and no exception text",
-        "At startup the store's recorded embedding model and dimension must match the embedder",
+        "At startup the embedding model and dimension recorded in system.db must match the embedder",
         "Chroma anonymized telemetry is disabled on the persistent client"
       ]
     },

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from orchestrator.api.app import MAX_BODY_BYTES, create_app
+from orchestrator.api.app import MAX_BODY_BYTES, BodySizeLimit, create_app
 from orchestrator.api.dependencies import get_llm, get_retriever
 from orchestrator.config import Settings
 from orchestrator.rag.chunker import Chunker
@@ -69,6 +69,28 @@ def test_body_exactly_at_the_limit_is_accepted(client, store):
 
     assert response.status_code == 201
     assert store.count() == 1
+
+
+def test_declared_oversized_body_is_refused_without_reading_it():
+    # A client announcing a huge Content-Length gets 413 before a single body byte is read.
+    import anyio
+
+    async def app(scope, receive, send):
+        raise AssertionError("the app must not run")
+
+    async def receive():
+        raise AssertionError("the body must not be read")
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    headers = [(b"content-length", str(MAX_BODY_BYTES + 1).encode())]
+    scope = {"type": "http", "method": "POST", "path": "/ingest", "headers": headers}
+    anyio.run(BodySizeLimit(app), scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 413
 
 
 def test_body_limit_is_one_megabyte():
